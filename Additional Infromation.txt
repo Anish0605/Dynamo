@@ -1,0 +1,36 @@
+Key Logic Steps:
+1) Input Priority: The app listens for inputs in a specific hierarchy: Quick Action Buttons > Voice Input > Text Input.
+
+2) Voice Processing: Audio is sent to Groq's Whisper-large-v3 model for near-instant transcription (0 latency).
+
+3) Context Construction: * Document Mode: If a PDF is uploaded, the app extracts text using PyPDF2 and prioritises it in the system prompt.
+   Web Mode: If no document is present, the app queries Tavily to fetch real-time sources (URLs, snippets) to ground the answer in fact.
+
+4) Inference: The combined User Query + PDF Context + Web Results are fed into Llama 3 (via Groq) to generate a finalised, cited answer.
+
+==========
+
+🚀 Features of DynamoAI:
+⚡ Hyper-Fast Inference: Runs on Groq's LPU (Language Processing Unit) for instant answers.
+
+🎙️ Voice-to-Text: Speak your queries using Whisper (High accuracy, Free tier).
+
+🌐 Live Fact-Checking: Connects to the internet via Tavily to verify facts in real-time.
+
+📂 Document Analysis: Upload PDFs and chat with them (summarisation, extraction).
+
+🎨 High-Voltage UI: Custom CSS styling with a "Dynamo Yellow" (#FFC107) and Black aesthetic.
+
+💾 Export History: Download your entire research session as a .txt file.
+
+===========
+🛠️ Tech Stack of Dynamo AI
+- Frontend: Streamlit
+
+- LLM Engine: Groq API (Model: llama-3.3-70b-versatile)
+
+- Voice Engine: Groq API (Model: whisper-large-v3-turbo)
+
+- Search Engine: Tavily AI
+
+- PDF Processing: PyPDF2
