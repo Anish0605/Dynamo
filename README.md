@@ -27,3 +27,5 @@ graph TD
     
     H --> I["LLM Reasoning (Llama 3 on Groq)"]
     I --> J[Streaming Response to UI]
+
+Please read the Additional Information.txt file for more curiosity.
