@@ -124,7 +124,7 @@ with col1:
     st.write("# ⚡") 
 with col2:
     st.title("Dynamo AI")
-    st.caption("Free Research OS • Powered by Groq & Tavily")
+    st.caption("Power Your Curiosity")
 
 # Session State
 if "messages" not in st.session_state:
