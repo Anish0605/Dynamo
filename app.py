@@ -1,7 +1,7 @@
 import streamlit as st
 from openai import OpenAI
 from tavily import TavilyClient
-import PyPDF2  # Required for PDF reading
+import PyPDF2
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -11,7 +11,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- CUSTOM CSS (YELLOW THEME) ---
+# --- CUSTOM CSS (YELLOW THEME & FIXED BUTTONS) ---
 st.markdown("""
 <style>
     /* 1. Main Background - Bright Yellow */
@@ -52,25 +52,28 @@ st.markdown("""
         border-right: 2px solid #000000;
     }
     
-    /* 5. Button Styling */
+    /* 5. FIXED BUTTON STYLING */
     .stButton>button {
         border-radius: 20px;
         border: 2px solid #000000;
         background-color: #000000;
-        color: #FFC107 !important;
+        color: #FFFFFF !important;  /* Bright White Text */
         font-weight: bold;
+        transition: all 0.2s ease-in-out;
     }
+    /* Hover Effect: Turns White with Black text */
     .stButton>button:hover {
-        background-color: #ffffff;
+        background-color: #FFFFFF;
         color: #000000 !important;
         border-color: #000000;
+        transform: scale(1.02);
     }
 </style>
 """, unsafe_allow_html=True)
 
 # --- MAIN SETUP ---
 
-# 1. LOAD KEYS (Only 2 needed!)
+# 1. LOAD KEYS
 groq_key = st.secrets.get("GROQ_API_KEY")
 tavily_key = st.secrets.get("TAVILY_API_KEY")
 
@@ -79,17 +82,15 @@ if not groq_key or not tavily_key:
     st.stop()
 
 # 2. INITIALIZE CLIENTS
-# Brain & Voice (Groq)
 groq_client = OpenAI(api_key=groq_key, base_url="https://api.groq.com/openai/v1")
-# Search (Tavily)
 tavily_client = TavilyClient(api_key=tavily_key)
 
-# --- SIDEBAR (TOOLS ONLY, NO KEYS) ---
+# --- SIDEBAR (TOOLS) ---
 with st.sidebar:
     st.header("⚡ Toolkit")
     st.write("---")
     
-    # PDF Upload Feature
+    # PDF Upload
     st.subheader("📂 Analyze Document")
     uploaded_file = st.file_uploader("Upload PDF Context", type="pdf")
     pdf_text = ""
@@ -97,7 +98,6 @@ with st.sidebar:
     if uploaded_file:
         try:
             reader = PyPDF2.PdfReader(uploaded_file)
-            # Read first 10 pages to prevent overload
             for page in reader.pages[:10]:
                 pdf_text += page.extract_text()
             st.success(f"✅ Loaded {len(pdf_text)} chars")
@@ -151,7 +151,6 @@ with input_container:
 
     final_query = None
     
-    # Priority: Button -> Voice -> Text
     if quick_prompt:
         final_query = quick_prompt
     
@@ -181,7 +180,7 @@ if final_query:
             
             # 1. Search Logic
             web_context = ""
-            if not pdf_text: # Only search web if no PDF or if specifically asked
+            if not pdf_text: 
                 status.write("🔍 Scanning web (Tavily)...")
                 try:
                     search_result = tavily_client.search(query=final_query, search_depth="basic")
