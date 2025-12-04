@@ -11,7 +11,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- CUSTOM CSS (YELLOW THEME & FORCED CONTRAST) ---
+# --- CUSTOM CSS (HIGH CONTRAST FIX) ---
 st.markdown("""
 <style>
     /* 1. Main Background - Bright Yellow */
@@ -20,67 +20,60 @@ st.markdown("""
         color: #000000;
     }
     
-    /* 2. FORCE TEXT COLORS */
+    /* 2. FORCE ALL PAGE TEXT TO BLACK (Default) */
     h1, h2, h3, h4, h5, h6, p, div, span, label, li {
-        color: #000000 !important;
+        color: #000000;
     }
     
-    /* 3. Chat Message Bubbles */
-    /* User Message - Black Bubble */
-    .stChatMessage[data-testid="stChatMessage"]:nth-child(odd) {
-        background-color: #000000; 
-        border: 2px solid #000000;
+    /* 3. CHAT BUBBLES - FORCE BLACK BACKGROUND */
+    .stChatMessage {
+        background-color: #000000 !important;
+        border: 2px solid #333 !important;
         border-radius: 15px;
         padding: 15px;
     }
-    /* FORCE User Text to be White */
-    .stChatMessage[data-testid="stChatMessage"]:nth-child(odd) div,
-    .stChatMessage[data-testid="stChatMessage"]:nth-child(odd) p,
-    .stChatMessage[data-testid="stChatMessage"]:nth-child(odd) span {
+    
+    /* 4. FORCE CHAT TEXT TO WHITE (The Fix) */
+    /* This specific rule targets text INSIDE chat bubbles to make it white */
+    .stChatMessage p, 
+    .stChatMessage div, 
+    .stChatMessage span, 
+    .stChatMessage h1, 
+    .stChatMessage h2, 
+    .stChatMessage h3, 
+    .stChatMessage li,
+    .stChatMessage td,
+    .stChatMessage th {
         color: #FFFFFF !important;
     }
-
-    /* Assistant Message - White Bubble, Black Text */
-    .stChatMessage[data-testid="stChatMessage"]:nth-child(even) {
-        background-color: #ffffff;
-        border: 2px solid #000000;
-        border-radius: 15px;
-        padding: 15px;
-    }
     
-    /* 4. Sidebar Styling */
+    /* Fix for code blocks inside chat (Yellow text on Dark Grey) */
+    .stChatMessage code {
+        background-color: #333 !important;
+        color: #FFC107 !important;
+    }
+
+    /* 5. SIDEBAR STYLING */
     [data-testid="stSidebar"] {
         background-color: #ffffff;
         border-right: 2px solid #000000;
     }
     
-    /* 5. ULTIMATE BUTTON FIX */
-    /* Normal State: Black Button, White Text */
+    /* 6. BUTTON STYLING */
     .stButton > button {
         background-color: #000000 !important;
-        color: #FFFFFF !important; /* Force text white */
+        color: #FFFFFF !important;
         border: 2px solid #000000 !important;
         border-radius: 20px;
         font-weight: bold;
     }
-    /* Target the text inside the button specifically */
-    .stButton > button p {
-        color: #FFFFFF !important;
-    }
-
-    /* Hover State: White Button, Black Text */
     .stButton > button:hover {
         background-color: #FFFFFF !important;
         color: #000000 !important;
-        border-color: #000000 !important;
         transform: scale(1.02);
     }
-    /* Target the text inside the button on Hover */
-    .stButton > button:hover p {
-        color: #000000 !important;
-    }
     
-    /* 6. Input Field Styling */
+    /* 7. INPUT FIELD STYLING */
     .stTextInput > div > div > input {
         background-color: #FFFFFF !important;
         color: #000000 !important;
@@ -91,7 +84,7 @@ st.markdown("""
 
 # --- MAIN SETUP ---
 
-# 1. LOAD KEYS (Only 2 needed)
+# 1. LOAD KEYS
 groq_key = st.secrets.get("GROQ_API_KEY")
 tavily_key = st.secrets.get("TAVILY_API_KEY")
 
@@ -108,7 +101,7 @@ with st.sidebar:
     st.header("⚡ Toolkit")
     st.write("---")
     
-    # 1. Search Toggle (TURBO MODE)
+    # 1. Search Toggle
     use_search = st.toggle("🌐 Enable Web Search", value=True, help="Turn OFF for instant answers.")
     
     st.write("---")
@@ -129,12 +122,11 @@ with st.sidebar:
 
     st.write("---")
     
-    # 3. Download Chat
+    # 3. Download/Clear
     if "messages" in st.session_state and len(st.session_state.messages) > 0:
         chat_log = "\n".join([f"{msg['role'].upper()}: {msg['content']}" for msg in st.session_state.messages])
         st.download_button("📥 Download Chat", chat_log, file_name="dynamo_chat.txt")
 
-    # 4. Clear Chat
     if st.button("🗑️ Reset Memory", use_container_width=True):
         st.session_state.messages = []
         st.rerun()
@@ -201,7 +193,7 @@ if final_query:
     with st.chat_message("assistant"):
         with st.status("🧠 Dynamo is working...", expanded=True) as status:
             
-            # 1. Search Logic (Controlled by Toggle)
+            # 1. Search Logic
             web_context = ""
             if not pdf_text and use_search: 
                 status.write("🔍 Scanning web (Tavily)...")
