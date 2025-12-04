@@ -5,9 +5,6 @@
 
 Built with **Streamlit**, powered by **Groq (Llama 3)**, and grounded by **Tavily Search**.
 
-![App Screenshot](https://dynamoai.streamlit.app/) 
-
-
 ---
 
 ## 🧠 How It Works (The Logic)
@@ -17,16 +14,16 @@ Dynamo AI operates on a **Retrieval-Augmented Generation (RAG)** architecture wi
 ```mermaid
 graph TD
     A[User Input] --> B{Input Source?}
-    B -- 🎙️ Voice Audio --> C[Groq Whisper Model]
-    B -- ⌨️ Text Input --> D[Raw Query]
+    B -- "🎙️ Voice Audio" --> C[Groq Whisper Model]
+    B -- "⌨️ Text Input" --> D[Raw Query]
     C --> D
     
     D --> E{Context Manager}
-    E -- 📂 PDF Uploaded? --> F[Extract Text (PyPDF2)]
-    E -- 🌐 Needs Info? --> G[Live Web Search (Tavily)]
+    E -- "📂 PDF Uploaded?" --> F["Extract Text (PyPDF2)"]
+    E -- "🌐 Needs Info?" --> G["Live Web Search (Tavily)"]
     
     F --> H[Context Injection]
     G --> H
     
-    H --> I[LLM Reasoning (Llama 3 on Groq)]
+    H --> I["LLM Reasoning (Llama 3 on Groq)"]
     I --> J[Streaming Response to UI]
