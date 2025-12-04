@@ -91,7 +91,7 @@ st.markdown("""
 
 # --- MAIN SETUP ---
 
-# 1. LOAD KEYS
+# 1. LOAD KEYS (Only 2 needed)
 groq_key = st.secrets.get("GROQ_API_KEY")
 tavily_key = st.secrets.get("TAVILY_API_KEY")
 
@@ -108,7 +108,12 @@ with st.sidebar:
     st.header("⚡ Toolkit")
     st.write("---")
     
-    # PDF Upload
+    # 1. Search Toggle (TURBO MODE)
+    use_search = st.toggle("🌐 Enable Web Search", value=True, help="Turn OFF for instant answers.")
+    
+    st.write("---")
+    
+    # 2. PDF Upload
     st.subheader("📂 Analyze Document")
     uploaded_file = st.file_uploader("Upload PDF Context", type="pdf")
     pdf_text = ""
@@ -124,12 +129,12 @@ with st.sidebar:
 
     st.write("---")
     
-    # Download Chat
+    # 3. Download Chat
     if "messages" in st.session_state and len(st.session_state.messages) > 0:
         chat_log = "\n".join([f"{msg['role'].upper()}: {msg['content']}" for msg in st.session_state.messages])
         st.download_button("📥 Download Chat", chat_log, file_name="dynamo_chat.txt")
 
-    # Clear Chat
+    # 4. Clear Chat
     if st.button("🗑️ Reset Memory", use_container_width=True):
         st.session_state.messages = []
         st.rerun()
@@ -196,15 +201,17 @@ if final_query:
     with st.chat_message("assistant"):
         with st.status("🧠 Dynamo is working...", expanded=True) as status:
             
-            # 1. Search Logic
+            # 1. Search Logic (Controlled by Toggle)
             web_context = ""
-            if not pdf_text: 
+            if not pdf_text and use_search: 
                 status.write("🔍 Scanning web (Tavily)...")
                 try:
                     search_result = tavily_client.search(query=final_query, search_depth="basic")
                     web_context = "\n".join([f"- {r['content']} (Source: {r['url']})" for r in search_result['results']])
                 except:
                     web_context = "Search unavailable."
+            else:
+                web_context = "Search disabled by user."
             
             # 2. Reasoning Logic
             status.write("⚙️ Thinking (Llama 3)...")
@@ -217,7 +224,8 @@ if final_query:
             
             INSTRUCTIONS:
             - If a PDF is uploaded, prioritize it.
-            - If no PDF, use Web Search.
+            - If no PDF and Search is ON, use Web Search.
+            - If Search is OFF, rely on your internal knowledge.
             - Be concise and accurate.
             """
 
