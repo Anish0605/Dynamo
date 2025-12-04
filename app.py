@@ -18,8 +18,8 @@ st.markdown("""
         color: #000000;
     }
     
-    /* 2. Text Adjustments (Make sure headers and text are black) */
-    h1, h2, h3, p, div, span {
+    /* 2. Text Adjustments */
+    h1, h2, h3, p, div, span, label {
         color: #000000 !important;
     }
     
@@ -32,7 +32,6 @@ st.markdown("""
         border-radius: 15px;
         padding: 15px;
     }
-    /* Fix text inside User bubble to be white */
     .stChatMessage[data-testid="stChatMessage"]:nth-child(odd) * {
         color: #ffffff !important;
     }
@@ -46,7 +45,7 @@ st.markdown("""
         padding: 15px;
     }
     
-    /* 4. Button Styling - Black Buttons with Yellow Text */
+    /* 4. Button Styling */
     .stButton>button {
         border-radius: 20px;
         border: 2px solid #000000;
@@ -66,25 +65,35 @@ st.markdown("""
         color: #000000;
         border: 2px solid #000000;
     }
+    /* Audio Widget Styling */
+    .stAudio {
+        background-color: #ffffff;
+        border-radius: 10px;
+        border: 2px solid #000000;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 # --- MAIN APP LOGIC ---
 
-# API Key Check
+# 1. LOAD KEYS
 xai_key = st.secrets.get("XAI_API_KEY")
 tavily_key = st.secrets.get("TAVILY_API_KEY")
-openai_key = st.secrets.get("OPENAI_API_KEY")
+groq_key = st.secrets.get("GROQ_API_KEY")
 
-if not xai_key or not tavily_key:
-    st.error("⚠️ Missing API Keys. Please add XAI_API_KEY and TAVILY_API_KEY to your Streamlit Secrets.")
+if not xai_key or not tavily_key or not groq_key:
+    st.error("⚠️ Missing API Keys. Please check your Streamlit Secrets.")
     st.stop()
 
-# Initialize Clients
+# 2. INITIALIZE CLIENTS
+# Brain (Grok/xAI)
 xai_client = OpenAI(api_key=xai_key, base_url="https://api.x.ai/v1")
+
+# Search (Tavily)
 tavily_client = TavilyClient(api_key=tavily_key)
-if openai_key:
-    openai_client = OpenAI(api_key=openai_key)
+
+# Voice (Groq - FREE Alternative to OpenAI)
+groq_client = OpenAI(api_key=groq_key, base_url="https://api.groq.com/openai/v1")
 
 # Header
 col1, col2 = st.columns([1, 12])
@@ -92,7 +101,7 @@ with col1:
     st.write("# ⚡") 
 with col2:
     st.title("Dynamo AI")
-    st.caption("Dynamo 1.0")
+    st.caption("Powered by Grok (Brain) & Groq (Voice)")
 
 # Session State
 if "messages" not in st.session_state:
@@ -114,21 +123,30 @@ if col_c.button("👶 Explain Simple"): quick_prompt = "Explain the last answer 
 # --- INPUT CONTAINER ---
 input_container = st.container()
 with input_container:
-    voice_audio = st.audio_input("🎙️ Voice Mode")
+    # Voice Input
+    voice_audio = st.audio_input("🎙️ Voice Mode (Free)")
+    # Text Input
     chat_input = st.chat_input("Ask Dynamo AI a question...")
 
     final_query = None
+    
+    # Priority Logic
     if quick_prompt:
         final_query = quick_prompt
-    elif voice_audio and openai_key:
-        with st.spinner("🎧 Transcribing..."):
+    
+    elif voice_audio:
+        with st.spinner("🎧 Transcribing with Groq..."):
             try:
-                transcription = openai_client.audio.transcriptions.create(
-                    model="whisper-1", file=voice_audio
+                # We use Groq's Whisper model (Free Tier)
+                transcription = groq_client.audio.transcriptions.create(
+                    model="whisper-large-v3-turbo", 
+                    file=("audio.wav", voice_audio), # Tuple format is safer
+                    response_format="text"
                 )
-                final_query = transcription.text
+                final_query = transcription
             except Exception as e:
                 st.error(f"Voice Error: {e}")
+    
     elif chat_input:
         final_query = chat_input
 
@@ -140,26 +158,24 @@ if final_query:
 
     with st.chat_message("assistant"):
         with st.status("🧠 Dynamo is thinking...", expanded=True) as status:
-            # 1. Search
+            
+            # 1. Search (Tavily)
             status.write("🔍 Scanning global data...")
+            web_context = "No search needed."
             try:
+                # We do a basic search for context
                 search_result = tavily_client.search(query=final_query, search_depth="basic")
                 web_context = "\n".join([f"- {r['content']} (Source: {r['url']})" for r in search_result['results']])
             except Exception as e:
-                web_context = "Search failed."
-                st.warning(f"Search error: {e}")
+                st.warning(f"Search skipped: {e}")
             
-            # 2. Reason
+            # 2. Reason (Grok xAI)
             status.write("⚙️ Synthesizing answer...")
-            system_prompt = f"""You are Dynamo AI, an advanced research assistant.
-            Use the provided context to answer the user's question.
+            system_prompt = f"""You are Dynamo AI.
+            Use this context to answer:
+            {web_context}
             
-            [WEB CONTEXT]: {web_context}
-            
-            Style guide:
-            - Be direct, accurate, and helpful.
-            - Use Bold text for key facts.
-            - Cite sources if used.
+            Be helpful, direct, and accurate.
             """
 
             stream = xai_client.chat.completions.create(
