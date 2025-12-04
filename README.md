@@ -6,7 +6,7 @@
 Built with **Streamlit**, powered by **Groq (Llama 3)**, and grounded by **Tavily Search**.
 
 ![App Screenshot](https://dynamoai.streamlit.app/) 
-*(Replace this link with an actual screenshot of your Yellow/Black UI)*
+
 
 ---
 
