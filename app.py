@@ -1,12 +1,14 @@
 import streamlit as st
 from openai import OpenAI
 from tavily import TavilyClient
+import PyPDF2  # Required for PDF reading
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
     page_title="Dynamo AI",
     page_icon="⚡",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
 # --- CUSTOM CSS (YELLOW THEME) ---
@@ -19,33 +21,38 @@ st.markdown("""
     }
     
     /* 2. Text Adjustments */
-    h1, h2, h3, p, div, span, label {
+    h1, h2, h3, p, div, span, label, li {
         color: #000000 !important;
     }
     
     /* 3. Chat Message Bubbles */
-    /* User Message (You) - Black Bubble, White Text */
+    /* User Message - Black Bubble */
     .stChatMessage[data-testid="stChatMessage"]:nth-child(odd) {
         background-color: #000000; 
-        color: #ffffff !important;
         border: 2px solid #000000;
         border-radius: 15px;
         padding: 15px;
     }
+    /* Fix text inside User bubble to be white */
     .stChatMessage[data-testid="stChatMessage"]:nth-child(odd) * {
         color: #ffffff !important;
     }
 
-    /* Assistant Message (Dynamo) - White Bubble, Black Text */
+    /* Assistant Message - White Bubble */
     .stChatMessage[data-testid="stChatMessage"]:nth-child(even) {
         background-color: #ffffff;
-        color: #000000 !important;
         border: 2px solid #000000;
         border-radius: 15px;
         padding: 15px;
     }
     
-    /* 4. Button Styling */
+    /* 4. Sidebar Styling */
+    [data-testid="stSidebar"] {
+        background-color: #ffffff;
+        border-right: 2px solid #000000;
+    }
+    
+    /* 5. Button Styling */
     .stButton>button {
         border-radius: 20px;
         border: 2px solid #000000;
@@ -58,50 +65,66 @@ st.markdown("""
         color: #000000 !important;
         border-color: #000000;
     }
-    
-    /* 5. Input Field Styling */
-    .stTextInput>div>div>input {
-        background-color: #ffffff;
-        color: #000000;
-        border: 2px solid #000000;
-    }
-    /* Audio Widget Styling */
-    .stAudio {
-        background-color: #ffffff;
-        border-radius: 10px;
-        border: 2px solid #000000;
-    }
 </style>
 """, unsafe_allow_html=True)
 
-# --- MAIN APP LOGIC ---
+# --- MAIN SETUP ---
 
-# 1. LOAD KEYS
-xai_key = st.secrets.get("XAI_API_KEY")
-tavily_key = st.secrets.get("TAVILY_API_KEY")
+# 1. LOAD KEYS (Only 2 needed!)
 groq_key = st.secrets.get("GROQ_API_KEY")
+tavily_key = st.secrets.get("TAVILY_API_KEY")
 
-if not xai_key or not tavily_key or not groq_key:
-    st.error("⚠️ Missing API Keys. Please check your Streamlit Secrets.")
+if not groq_key or not tavily_key:
+    st.error("⚠️ Missing Keys. Please add `GROQ_API_KEY` and `TAVILY_API_KEY` to your Streamlit Secrets.")
     st.stop()
 
 # 2. INITIALIZE CLIENTS
-# Brain (Grok/xAI)
-xai_client = OpenAI(api_key=xai_key, base_url="https://api.x.ai/v1")
-
+# Brain & Voice (Groq)
+groq_client = OpenAI(api_key=groq_key, base_url="https://api.groq.com/openai/v1")
 # Search (Tavily)
 tavily_client = TavilyClient(api_key=tavily_key)
 
-# Voice (Groq - FREE Alternative to OpenAI)
-groq_client = OpenAI(api_key=groq_key, base_url="https://api.groq.com/openai/v1")
+# --- SIDEBAR (TOOLS ONLY, NO KEYS) ---
+with st.sidebar:
+    st.header("⚡ Toolkit")
+    st.write("---")
+    
+    # PDF Upload Feature
+    st.subheader("📂 Analyze Document")
+    uploaded_file = st.file_uploader("Upload PDF Context", type="pdf")
+    pdf_text = ""
+    
+    if uploaded_file:
+        try:
+            reader = PyPDF2.PdfReader(uploaded_file)
+            # Read first 10 pages to prevent overload
+            for page in reader.pages[:10]:
+                pdf_text += page.extract_text()
+            st.success(f"✅ Loaded {len(pdf_text)} chars")
+        except Exception as e:
+            st.error("Error reading PDF")
+
+    st.write("---")
+    
+    # Download Chat
+    if "messages" in st.session_state and len(st.session_state.messages) > 0:
+        chat_log = "\n".join([f"{msg['role'].upper()}: {msg['content']}" for msg in st.session_state.messages])
+        st.download_button("📥 Download Chat", chat_log, file_name="dynamo_chat.txt")
+
+    # Clear Chat
+    if st.button("🗑️ Reset Memory", use_container_width=True):
+        st.session_state.messages = []
+        st.rerun()
+
+# --- MAIN APP LOGIC ---
 
 # Header
-col1, col2 = st.columns([1, 12])
+col1, col2 = st.columns([1, 15])
 with col1:
     st.write("# ⚡") 
 with col2:
     st.title("Dynamo AI")
-    st.caption("Powered by Grok (Brain) & Groq (Voice)")
+    st.caption("Free Research OS • Powered by Groq & Tavily")
 
 # Session State
 if "messages" not in st.session_state:
@@ -112,35 +135,32 @@ for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-# --- QUICK ACTION BUTTONS ---
+# Quick Actions
 st.write("")
 col_a, col_b, col_c = st.columns(3)
 quick_prompt = None
-if col_a.button("📝 Summarize Last"): quick_prompt = "Summarize our conversation."
-if col_b.button("🕵️ Deep Fact Check"): quick_prompt = "Perform a deep fact check on the last topic."
-if col_c.button("👶 Explain Simple"): quick_prompt = "Explain the last answer like I'm 5."
+if col_a.button("📝 Summarize"): quick_prompt = "Summarize our conversation."
+if col_b.button("🕵️ Fact Check"): quick_prompt = "Verify the facts of the last response."
+if col_c.button("👶 Explain Simple"): quick_prompt = "Explain like I'm 5."
 
-# --- INPUT CONTAINER ---
+# Input Area
 input_container = st.container()
 with input_container:
-    # Voice Input
     voice_audio = st.audio_input("🎙️ Voice Mode (Free)")
-    # Text Input
-    chat_input = st.chat_input("Ask Dynamo AI a question...")
+    chat_input = st.chat_input("Ask Dynamo...")
 
     final_query = None
     
-    # Priority Logic
+    # Priority: Button -> Voice -> Text
     if quick_prompt:
         final_query = quick_prompt
     
     elif voice_audio:
         with st.spinner("🎧 Transcribing with Groq..."):
             try:
-                # We use Groq's Whisper model (Free Tier)
                 transcription = groq_client.audio.transcriptions.create(
                     model="whisper-large-v3-turbo", 
-                    file=("audio.wav", voice_audio), # Tuple format is safer
+                    file=("audio.wav", voice_audio),
                     response_format="text"
                 )
                 final_query = transcription
@@ -157,29 +177,35 @@ if final_query:
         st.markdown(final_query)
 
     with st.chat_message("assistant"):
-        with st.status("🧠 Dynamo is thinking...", expanded=True) as status:
+        with st.status("🧠 Dynamo is working...", expanded=True) as status:
             
-            # 1. Search (Tavily)
-            status.write("🔍 Scanning global data...")
-            web_context = "No search needed."
-            try:
-                # We do a basic search for context
-                search_result = tavily_client.search(query=final_query, search_depth="basic")
-                web_context = "\n".join([f"- {r['content']} (Source: {r['url']})" for r in search_result['results']])
-            except Exception as e:
-                st.warning(f"Search skipped: {e}")
+            # 1. Search Logic
+            web_context = ""
+            if not pdf_text: # Only search web if no PDF or if specifically asked
+                status.write("🔍 Scanning web (Tavily)...")
+                try:
+                    search_result = tavily_client.search(query=final_query, search_depth="basic")
+                    web_context = "\n".join([f"- {r['content']} (Source: {r['url']})" for r in search_result['results']])
+                except:
+                    web_context = "Search unavailable."
             
-            # 2. Reason (Grok xAI)
-            status.write("⚙️ Synthesizing answer...")
+            # 2. Reasoning Logic
+            status.write("⚙️ Thinking (Llama 3)...")
+            
             system_prompt = f"""You are Dynamo AI.
-            Use this context to answer:
-            {web_context}
             
-            Be helpful, direct, and accurate.
+            SOURCES AVAILABLE:
+            1. PDF DOCUMENT: {pdf_text if pdf_text else "None"}
+            2. WEB SEARCH: {web_context if web_context else "None"}
+            
+            INSTRUCTIONS:
+            - If a PDF is uploaded, prioritize it.
+            - If no PDF, use Web Search.
+            - Be concise and accurate.
             """
 
-            stream = xai_client.chat.completions.create(
-                model="grok-beta",
+            stream = groq_client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": final_query}
@@ -188,5 +214,5 @@ if final_query:
             )
             
             response = st.write_stream(stream)
-            status.update(label="✅ Complete", state="complete", expanded=False)
+            status.update(label="✅ Ready", state="complete", expanded=False)
             st.session_state.messages.append({"role": "assistant", "content": response})
