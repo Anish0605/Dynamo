@@ -5,7 +5,7 @@
 
 Built with **Streamlit**, powered by **Groq (Llama 3)**, and grounded by **Tavily Search**.
 
----
+---Please read the Additional Information.txt file for more curiosity----
 
 ## 🧠 How It Works (The Logic)
 
@@ -27,5 +27,3 @@ graph TD
     
     H --> I["LLM Reasoning (Llama 3 on Groq)"]
     I --> J[Streaming Response to UI]
-
-Please read the Additional Information.txt file for more curiosity.
