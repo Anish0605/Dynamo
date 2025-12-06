@@ -2,16 +2,17 @@ import streamlit as st
 from openai import OpenAI
 from tavily import TavilyClient
 import PyPDF2
+import json
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
-    page_title="Dynamo AI",
+    page_title="Dynamo AI 2.0",
     page_icon="⚡",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# --- CUSTOM CSS (HIGH CONTRAST FIX) ---
+# --- CUSTOM CSS (HIGH CONTRAST & UI POLISH) ---
 st.markdown("""
 <style>
     /* 1. Main Background - Bright Yellow */
@@ -20,7 +21,7 @@ st.markdown("""
         color: #000000;
     }
     
-    /* 2. FORCE ALL PAGE TEXT TO BLACK (Default) */
+    /* 2. FORCE TEXT COLORS TO BLACK (Page Default) */
     h1, h2, h3, h4, h5, h6, p, div, span, label, li {
         color: #000000;
     }
@@ -33,21 +34,17 @@ st.markdown("""
         padding: 15px;
     }
     
-    /* 4. FORCE CHAT TEXT TO WHITE (The Fix) */
-    /* This specific rule targets text INSIDE chat bubbles to make it white */
+    /* 4. FORCE CHAT TEXT TO WHITE */
+    /* This overrides the page default just for inside the chat bubbles */
     .stChatMessage p, 
     .stChatMessage div, 
     .stChatMessage span, 
     .stChatMessage h1, 
     .stChatMessage h2, 
     .stChatMessage h3, 
-    .stChatMessage li,
-    .stChatMessage td,
-    .stChatMessage th {
+    .stChatMessage li {
         color: #FFFFFF !important;
     }
-    
-    /* Fix for code blocks inside chat (Yellow text on Dark Grey) */
     .stChatMessage code {
         background-color: #333 !important;
         color: #FFC107 !important;
@@ -82,9 +79,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- MAIN SETUP ---
-
-# 1. LOAD KEYS
+# --- SETUP KEYS & CLIENTS ---
 groq_key = st.secrets.get("GROQ_API_KEY")
 tavily_key = st.secrets.get("TAVILY_API_KEY")
 
@@ -92,37 +87,66 @@ if not groq_key or not tavily_key:
     st.error("⚠️ Missing Keys. Please add `GROQ_API_KEY` and `TAVILY_API_KEY` to your Streamlit Secrets.")
     st.stop()
 
-# 2. INITIALIZE CLIENTS
+# Brain & Voice (Groq)
 groq_client = OpenAI(api_key=groq_key, base_url="https://api.groq.com/openai/v1")
+# Search (Tavily)
 tavily_client = TavilyClient(api_key=tavily_key)
 
-# --- SIDEBAR (TOOLS) ---
+# --- HELPER FUNCTIONS ---
+
+def generate_image(prompt):
+    """Generates an image using Pollinations AI (Free, No Key)"""
+    clean_prompt = prompt.replace(" ", "%20")
+    # Pollinations is a free, public API for AI generation
+    return f"https://image.pollinations.ai/prompt/{clean_prompt}?nologo=true"
+
+def deep_dive_search(query):
+    """Generates multiple search queries for better context"""
+    try:
+        # Ask Llama 3 to brainstorm search terms
+        response = groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{
+                "role": "system", 
+                "content": "Return ONLY a JSON object with a key 'queries' containing a list of 3 distinct search queries to answer the user's question."
+            }, {
+                "role": "user", 
+                "content": query
+            }],
+            response_format={"type": "json_object"}
+        )
+        data = json.loads(response.choices[0].message.content)
+        return data.get('queries', [query])[:3]
+    except:
+        return [query] # Fallback if JSON fails
+
+# --- SIDEBAR ---
 with st.sidebar:
-    st.header("⚡ Toolkit")
+    st.header("⚡ Toolkit 2.0")
     st.write("---")
     
-    # 1. Search Toggle
-    use_search = st.toggle("🌐 Enable Web Search", value=True, help="Turn OFF for instant answers.")
+    # 1. Toggles
+    use_search = st.toggle("🌐 Web Search", value=True)
+    deep_dive = st.toggle("🤿 Deep Dive Mode", value=False, help="Slower but smarter. Searches multiple angles.")
     
     st.write("---")
     
-    # 2. PDF Upload
-    st.subheader("📂 Analyze Document")
-    uploaded_file = st.file_uploader("Upload PDF Context", type="pdf")
+    # 2. PDF
+    st.subheader("📂 Document")
+    uploaded_file = st.file_uploader("Upload PDF", type="pdf")
     pdf_text = ""
-    
     if uploaded_file:
         try:
             reader = PyPDF2.PdfReader(uploaded_file)
             for page in reader.pages[:10]:
                 pdf_text += page.extract_text()
-            st.success(f"✅ Loaded {len(pdf_text)} chars")
-        except Exception as e:
+            st.success("PDF Loaded")
+        except:
             st.error("Error reading PDF")
 
     st.write("---")
     
-    # 3. Download/Clear
+    # 3. Chat Controls
     if "messages" in st.session_state and len(st.session_state.messages) > 0:
         chat_log = "\n".join([f"{msg['role'].upper()}: {msg['content']}" for msg in st.session_state.messages])
         st.download_button("📥 Download Chat", chat_log, file_name="dynamo_chat.txt")
@@ -131,46 +155,35 @@ with st.sidebar:
         st.session_state.messages = []
         st.rerun()
 
-# --- MAIN APP LOGIC ---
-
-# Header
+# --- MAIN APP ---
 col1, col2 = st.columns([1, 15])
-with col1:
-    st.write("# ⚡") 
-with col2:
+with col1: st.write("# ⚡") 
+with col2: 
     st.title("Dynamo AI")
-    st.caption("Free Research OS • Powered by Groq & Tavily")
+    st.caption("Phase 2: Deep Dive & Image Gen")
 
-# Session State
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
 # Display History
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
+        # Check if message is a special Image tag
+        if msg["content"].startswith("IMAGE::"):
+            st.image(msg["content"].replace("IMAGE::", ""))
+        else:
+            st.markdown(msg["content"])
 
-# Quick Actions
-st.write("")
-col_a, col_b, col_c = st.columns(3)
-quick_prompt = None
-if col_a.button("📝 Summarize"): quick_prompt = "Summarize our conversation."
-if col_b.button("🕵️ Fact Check"): quick_prompt = "Verify the facts of the last response."
-if col_c.button("👶 Explain Simple"): quick_prompt = "Explain like I'm 5."
-
-# Input Area
+# Input
 input_container = st.container()
 with input_container:
-    voice_audio = st.audio_input("🎙️ Voice Mode (Free)")
-    chat_input = st.chat_input("Ask Dynamo...")
+    voice_audio = st.audio_input("🎙️ Voice")
+    chat_input = st.chat_input("Ask Dynamo (or type 'Generate image of...')...")
 
     final_query = None
     
-    if quick_prompt:
-        final_query = quick_prompt
-    
-    elif voice_audio:
-        with st.spinner("🎧 Transcribing with Groq..."):
+    if voice_audio:
+        with st.spinner("🎧 Hearing..."):
             try:
                 transcription = groq_client.audio.transcriptions.create(
                     model="whisper-large-v3-turbo", 
@@ -178,58 +191,90 @@ with input_container:
                     response_format="text"
                 )
                 final_query = transcription
-            except Exception as e:
-                st.error(f"Voice Error: {e}")
-    
+            except: st.error("Voice Error")
     elif chat_input:
         final_query = chat_input
 
-# --- PROCESS QUERY ---
+# --- LOGIC ENGINE ---
 if final_query:
     st.session_state.messages.append({"role": "user", "content": final_query})
     with st.chat_message("user"):
         st.markdown(final_query)
 
     with st.chat_message("assistant"):
-        with st.status("🧠 Dynamo is working...", expanded=True) as status:
-            
-            # 1. Search Logic
-            web_context = ""
-            if not pdf_text and use_search: 
-                status.write("🔍 Scanning web (Tavily)...")
-                try:
-                    search_result = tavily_client.search(query=final_query, search_depth="basic")
-                    web_context = "\n".join([f"- {r['content']} (Source: {r['url']})" for r in search_result['results']])
-                except:
-                    web_context = "Search unavailable."
-            else:
-                web_context = "Search disabled by user."
-            
-            # 2. Reasoning Logic
-            status.write("⚙️ Thinking (Llama 3)...")
-            
-            system_prompt = f"""You are Dynamo AI.
-            
-            SOURCES AVAILABLE:
-            1. PDF DOCUMENT: {pdf_text if pdf_text else "None"}
-            2. WEB SEARCH: {web_context if web_context else "None"}
-            
-            INSTRUCTIONS:
-            - If a PDF is uploaded, prioritize it.
-            - If no PDF and Search is ON, use Web Search.
-            - If Search is OFF, rely on your internal knowledge.
-            - Be concise and accurate.
-            """
+        
+        # 1. IMAGE GENERATION DETECTOR
+        # Checks if user wants to draw/generate an image
+        if "image" in final_query.lower() and ("generate" in final_query.lower() or "draw" in final_query.lower() or "create" in final_query.lower()):
+            with st.status("🎨 Painting...", expanded=True):
+                # Refine the prompt using Llama 3
+                refine_prompt = groq_client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=[{"role": "user", "content": f"Create a detailed, vivid image generation prompt for: {final_query}. Output ONLY the prompt string."}]
+                ).choices[0].message.content
+                
+                # Call the Image API
+                img_url = generate_image(refine_prompt)
+                st.image(img_url, caption=refine_prompt)
+                
+                # Save to history with special tag
+                st.session_state.messages.append({"role": "assistant", "content": f"IMAGE::{img_url}"})
+        
+        # 2. TEXT / RESEARCH MODE
+        else:
+            with st.status("🧠 Dynamo is thinking...", expanded=True) as status:
+                web_context = ""
+                
+                # SEARCH LOGIC
+                if not pdf_text and use_search:
+                    if deep_dive:
+                        # Deep Dive: Multi-Query Strategy
+                        status.write("🤿 Deep Dive Active: Planning search strategy...")
+                        queries = deep_dive_search(final_query)
+                        
+                        all_results = []
+                        for q in queries:
+                            status.write(f"🔍 Searching: {q}...")
+                            try:
+                                res = tavily_client.search(query=q, search_depth="basic")
+                                all_results.extend([r['content'] for r in res['results']])
+                            except: pass
+                        web_context = "\n".join(all_results)
+                        
+                        # Show what it found
+                        with st.expander("View Deep Dive Data"):
+                            st.write(queries)
+                            st.write(web_context)
+                            
+                    else:
+                        # Standard Search (Single Query)
+                        status.write("🔍 Scanning web...")
+                        try:
+                            res = tavily_client.search(query=final_query, search_depth="basic")
+                            web_context = "\n".join([f"- {r['content']}" for r in res['results']])
+                        except: web_context = "Search failed."
 
-            stream = groq_client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": final_query}
-                ],
-                stream=True
-            )
-            
-            response = st.write_stream(stream)
-            status.update(label="✅ Ready", state="complete", expanded=False)
-            st.session_state.messages.append({"role": "assistant", "content": response})
+                # REASONING LOGIC
+                status.write("⚙️ Synthesizing...")
+                system_prompt = f"""You are Dynamo AI.
+                CONTEXT:
+                {pdf_text if pdf_text else "No PDF"}
+                {web_context if web_context else "No Web Info"}
+                
+                INSTRUCTIONS:
+                - If Deep Dive is ON, be exhaustive and detailed.
+                - If Image is requested, decline (it is handled separately).
+                - Be accurate and cite sources.
+                """
+                
+                stream = groq_client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": final_query}
+                    ],
+                    stream=True
+                )
+                response = st.write_stream(stream)
+                status.update(label="✅ Complete", state="complete", expanded=False)
+                st.session_state.messages.append({"role": "assistant", "content": response})
