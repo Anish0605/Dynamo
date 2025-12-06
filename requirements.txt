@@ -3,3 +3,5 @@ openai
 tavily-python
 PyPDF2
 Pillow
+pandas
+requests
