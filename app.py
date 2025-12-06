@@ -37,7 +37,6 @@ st.markdown("""
     }
     
     /* 4. FORCE CHAT TEXT TO WHITE */
-    /* This overrides the page default just for inside the chat bubbles */
     .stChatMessage p, 
     .stChatMessage div, 
     .stChatMessage span, 
@@ -58,26 +57,24 @@ st.markdown("""
         border-right: 2px solid #000000;
     }
     
-    /* 6. BUTTON STYLING - MORE AGGRESSIVE SELECTOR */
-    /* Targets all buttons, including quick actions and download buttons */
-    div.stButton > button:first-child {
+    /* 6. BUTTON STYLING */
+    div.stButton > button {
         background-color: #000000 !important;
         color: #FFFFFF !important;
         border: 2px solid #000000 !important;
         border-radius: 20px !important;
         font-weight: bold !important;
     }
-    div.stButton > button:first-child:hover {
+    div.stButton > button:hover {
         background-color: #FFFFFF !important;
         color: #000000 !important;
         transform: scale(1.02);
         border-color: #000000 !important;
     }
-    /* Force text inside buttons to be white */
-    div.stButton > button:first-child p {
+    div.stButton > button p {
         color: #FFFFFF !important;
     }
-    div.stButton > button:first-child:hover p {
+    div.stButton > button:hover p {
         color: #000000 !important;
     }
     
@@ -108,13 +105,11 @@ tavily_client = TavilyClient(api_key=tavily_key)
 def generate_image(prompt):
     """Generates an image using Pollinations AI (Free, No Key)"""
     clean_prompt = prompt.replace(" ", "%20")
-    # Pollinations is a free, public API for AI generation
     return f"https://image.pollinations.ai/prompt/{clean_prompt}?nologo=true"
 
 def deep_dive_search(query):
     """Generates multiple search queries for better context"""
     try:
-        # Ask Llama 3 to brainstorm search terms
         response = groq_client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[{
@@ -129,20 +124,37 @@ def deep_dive_search(query):
         data = json.loads(response.choices[0].message.content)
         return data.get('queries', [query])[:3]
     except:
-        return [query] # Fallback if JSON fails
+        return [query] 
+
+def generate_suggestions(context_history):
+    """Generates 3 short follow-up suggestions based on chat history"""
+    try:
+        # Create a mini-history string
+        history_text = "\n".join([f"{msg['role']}: {msg['content']}" for msg in context_history[-3:]])
+        
+        response = groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant. Based on the chat history, suggest 3 short, actionable follow-up prompts the user might want to ask next. (e.g. 'Summarize this', 'Give examples', 'Convert to list'). Return ONLY a JSON object with a key 'suggestions' containing a list of 3 strings."},
+                {"role": "user", "content": f"Chat History:\n{history_text}"}
+            ],
+            response_format={"type": "json_object"}
+        )
+        data = json.loads(response.choices[0].message.content)
+        return data.get('suggestions', [])
+    except:
+        return ["Summarize this", "Tell me more", "Explain simply"]
 
 # --- SIDEBAR ---
 with st.sidebar:
     st.header("⚡ Toolkit 2.0")
     st.write("---")
     
-    # 1. Toggles
     use_search = st.toggle("🌐 Web Search", value=True)
     deep_dive = st.toggle("🤿 Deep Dive Mode", value=False, help="Slower but smarter. Searches multiple angles.")
     
     st.write("---")
     
-    # 2. PDF
     st.subheader("📂 Document")
     uploaded_file = st.file_uploader("Upload PDF", type="pdf")
     pdf_text = ""
@@ -157,13 +169,13 @@ with st.sidebar:
 
     st.write("---")
     
-    # 3. Chat Controls
     if "messages" in st.session_state and len(st.session_state.messages) > 0:
         chat_log = "\n".join([f"{msg['role'].upper()}: {msg['content']}" for msg in st.session_state.messages])
         st.download_button("📥 Download Chat", chat_log, file_name="dynamo_chat.txt")
 
     if st.button("🗑️ Reset Memory", use_container_width=True):
         st.session_state.messages = []
+        st.session_state.suggestion_prompt = None # Clear suggestions
         st.rerun()
 
 # --- MAIN APP ---
@@ -173,45 +185,57 @@ with col2:
     st.title("Dynamo AI")
     st.caption("Phase 2: Deep Dive & Image Gen")
 
+# Initialize Session State
 if "messages" not in st.session_state:
     st.session_state.messages = []
+if "suggestion_prompt" not in st.session_state:
+    st.session_state.suggestion_prompt = None
 
 # Display History
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
-        # Check if message is a special Image tag
         if msg["content"].startswith("IMAGE::"):
             img_url = msg["content"].replace("IMAGE::", "")
             st.image(img_url)
             # Add download button for historical images
             try:
+                # Use a unique key for each download button based on URL
+                btn_key = f"dl_{img_url}_{st.session_state.messages.index(msg)}"
                 response = requests.get(img_url)
                 img_data = BytesIO(response.content)
-                st.download_button(label="📥 Download Image", data=img_data, file_name="generated_image.png", mime="image/png", key=f"dl_{img_url}")
+                st.download_button(label="📥 Download Image", data=img_data, file_name="generated_image.png", mime="image/png", key=btn_key)
             except:
-                st.warning("Could not prepare image for download.")
+                pass
         else:
             st.markdown(msg["content"])
 
-# --- QUICK ACTION BUTTONS ---
+# --- QUICK ACTION BUTTONS (TOP) ---
 st.write("")
 col_a, col_b, col_c = st.columns(3)
 quick_prompt = None
-if col_a.button("📝 Summarize"): quick_prompt = "Summarize our conversation so far."
-if col_b.button("🕵️ Fact Check"): quick_prompt = "Deeply verify the facts in the last response."
-if col_c.button("👶 Explain Simple"): quick_prompt = "Explain the last concept like I am 5 years old."
+
+# We use a callback to set the prompt if a button is clicked
+def set_quick_prompt(text):
+    st.session_state.suggestion_prompt = text
+
+if col_a.button("📝 Summarize"): set_quick_prompt("Summarize our conversation so far.")
+if col_b.button("🕵️ Fact Check"): set_quick_prompt("Deeply verify the facts in the last response.")
+if col_c.button("👶 Explain Simple"): set_quick_prompt("Explain the last concept like I am 5 years old.")
 
 # Input
 input_container = st.container()
 with input_container:
     voice_audio = st.audio_input("🎙️ Voice")
-    chat_input = st.chat_input("Ask Dynamo (or type 'Generate image of...')...")
+    chat_input = st.chat_input("Ask Dynamo...")
 
     final_query = None
     
-    # Determine the final query based on priority: Button > Voice > Text
-    if quick_prompt:
-        final_query = quick_prompt
+    # 1. Check if a Suggestion/Quick Button was clicked
+    if st.session_state.suggestion_prompt:
+        final_query = st.session_state.suggestion_prompt
+        st.session_state.suggestion_prompt = None # Reset after use
+    
+    # 2. Check Voice
     elif voice_audio:
         with st.spinner("🎧 Hearing..."):
             try:
@@ -222,6 +246,8 @@ with input_container:
                 )
                 final_query = transcription
             except: st.error("Voice Error")
+            
+    # 3. Check Text Input
     elif chat_input:
         final_query = chat_input
 
@@ -233,44 +259,35 @@ if final_query:
 
     with st.chat_message("assistant"):
         
-        # 1. IMAGE GENERATION DETECTOR
-        # Checks if user wants to draw/generate an image
+        # IMAGE GENERATION
         if "image" in final_query.lower() and ("generate" in final_query.lower() or "draw" in final_query.lower() or "create" in final_query.lower()):
             with st.status("🎨 Painting...", expanded=True):
-                # Refine the prompt using Llama 3
                 refine_prompt = groq_client.chat.completions.create(
                     model="llama-3.3-70b-versatile",
                     messages=[{"role": "user", "content": f"Create a detailed, vivid image generation prompt for: {final_query}. Output ONLY the prompt string."}]
                 ).choices[0].message.content
                 
-                # Call the Image API
                 img_url = generate_image(refine_prompt)
                 st.image(img_url, caption=refine_prompt)
-                
-                # Save to history with special tag
                 st.session_state.messages.append({"role": "assistant", "content": f"IMAGE::{img_url}"})
-
-                # --- NEW: DOWNLOAD BUTTON FOR CURRENT IMAGE ---
+                
+                # New Download Button
                 try:
                     response = requests.get(img_url)
                     img_data = BytesIO(response.content)
-                    st.download_button(label="📥 Download Image", data=img_data, file_name="generated_image.png", mime="image/png")
+                    st.download_button(label="📥 Download Image", data=img_data, file_name="generated_image.png", mime="image/png", key="new_dl_btn")
                 except Exception as e:
-                    st.error(f"Could not prepare download: {e}")
-
+                    st.error(f"Download Error: {e}")
         
-        # 2. TEXT / RESEARCH MODE
+        # TEXT RESEARCH
         else:
             with st.status("🧠 Dynamo is thinking...", expanded=True) as status:
                 web_context = ""
                 
-                # SEARCH LOGIC
                 if not pdf_text and use_search:
                     if deep_dive:
-                        # Deep Dive: Multi-Query Strategy
-                        status.write("🤿 Deep Dive Active: Planning search strategy...")
+                        status.write("🤿 Deep Dive Active...")
                         queries = deep_dive_search(final_query)
-                        
                         all_results = []
                         for q in queries:
                             status.write(f"🔍 Searching: {q}...")
@@ -279,45 +296,27 @@ if final_query:
                                 all_results.extend([r['content'] for r in res['results']])
                             except: pass
                         web_context = "\n".join(all_results)
-                        
-                        # Show what it found
                         with st.expander("View Deep Dive Data"):
                             st.write(queries)
                             st.write(web_context)
-                            
                     else:
-                        # Standard Search (Single Query)
                         status.write("🔍 Scanning web...")
                         try:
                             res = tavily_client.search(query=final_query, search_depth="basic")
                             web_context = "\n".join([f"- {r['content']}" for r in res['results']])
                         except: web_context = "Search failed."
 
-                # REASONING LOGIC
                 status.write("⚙️ Synthesizing...")
                 system_prompt = f"""You are Dynamo AI.
-                CONTEXT:
-                {pdf_text if pdf_text else "No PDF"}
-                {web_context if web_context else "No Web Info"}
-                
-                INSTRUCTIONS:
-                - If Deep Dive is ON, be exhaustive and detailed.
-                - If Image is requested, decline (it is handled separately).
-                - Be accurate and cite sources.
+                CONTEXT: {pdf_text if pdf_text else "No PDF"} {web_context if web_context else "No Web Info"}
+                INSTRUCTIONS: If Deep Dive is ON, be exhaustive. If Image is requested, decline. Be accurate and cite sources.
                 """
                 
-                # --- FIX: BUILD MESSAGE HISTORY ---
-                # Start with System Prompt
+                # Build History
                 api_messages = [{"role": "system", "content": system_prompt}]
-                
-                # Add Chat History (Last 5 messages for context, excluding the current new one)
-                # We slice [:-1] because we appended the user's latest query at the very top of this block
                 for msg in st.session_state.messages[:-1]:
-                    # Only add text content, skip image URLs to avoid confusion
                     if not msg["content"].startswith("IMAGE::"):
                         api_messages.append({"role": msg["role"], "content": msg["content"]})
-                
-                # Add Current User Question (final_query)
                 api_messages.append({"role": "user", "content": final_query})
 
                 stream = groq_client.chat.completions.create(
@@ -328,3 +327,15 @@ if final_query:
                 response = st.write_stream(stream)
                 status.update(label="✅ Complete", state="complete", expanded=False)
                 st.session_state.messages.append({"role": "assistant", "content": response})
+            
+            # --- DYNAMIC SUGGESTIONS (Validating Tester Feedback) ---
+            # Generate 3 follow-up suggestions
+            suggestions = generate_suggestions(st.session_state.messages)
+            
+            if suggestions:
+                st.write("### 💡 Suggested Next Steps:")
+                cols = st.columns(len(suggestions))
+                for i, sugg in enumerate(suggestions):
+                    if cols[i].button(sugg, key=f"sugg_{len(st.session_state.messages)}_{i}"):
+                        set_quick_prompt(sugg)
+                        st.rerun()
