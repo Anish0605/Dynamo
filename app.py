@@ -30,7 +30,7 @@ def init_db():
         conn.commit()
         conn.close()
     except Exception as e:
-        pass # Fail silently if DB is locked, ephemeral storage will work for session
+        pass # Fail silently if DB is locked
 
 def save_message_db(session_id, role, content):
     try:
