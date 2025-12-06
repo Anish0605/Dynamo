@@ -20,69 +20,75 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- DATABASE ENGINE (MEMORY) ---
+# --- DATABASE ENGINE ---
 def init_db():
-    conn = sqlite3.connect('dynamo_memory.db')
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS sessions
-                 (id TEXT PRIMARY KEY, title TEXT, timestamp DATETIME)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS messages
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, role TEXT, content TEXT)''')
-    conn.commit()
-    conn.close()
+    try:
+        conn = sqlite3.connect('dynamo_memory.db')
+        c = conn.cursor()
+        c.execute('''CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, title TEXT, timestamp DATETIME)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, role TEXT, content TEXT)''')
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        pass # Fail silently if DB is locked, ephemeral storage will work for session
 
 def save_message_db(session_id, role, content):
-    conn = sqlite3.connect('dynamo_memory.db')
-    c = conn.cursor()
-    c.execute("INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)", 
-              (session_id, role, content))
-    conn.commit()
-    conn.close()
+    try:
+        conn = sqlite3.connect('dynamo_memory.db')
+        c = conn.cursor()
+        c.execute("INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)", (session_id, role, content))
+        conn.commit()
+        conn.close()
+    except: pass
 
 def create_session(title="New Chat"):
     session_id = str(uuid.uuid4())
-    conn = sqlite3.connect('dynamo_memory.db')
-    c = conn.cursor()
-    c.execute("INSERT INTO sessions (id, title, timestamp) VALUES (?, ?, ?)", 
-              (session_id, title, datetime.now()))
-    conn.commit()
-    conn.close()
+    try:
+        conn = sqlite3.connect('dynamo_memory.db')
+        c = conn.cursor()
+        c.execute("INSERT INTO sessions (id, title, timestamp) VALUES (?, ?, ?)", (session_id, title, datetime.now()))
+        conn.commit()
+        conn.close()
+    except: pass
     return session_id
 
 def get_history():
-    conn = sqlite3.connect('dynamo_memory.db')
-    c = conn.cursor()
-    c.execute("SELECT id, title FROM sessions ORDER BY timestamp DESC LIMIT 10")
-    sessions = c.fetchall()
-    conn.close()
-    return sessions
+    try:
+        conn = sqlite3.connect('dynamo_memory.db')
+        c = conn.cursor()
+        c.execute("SELECT id, title FROM sessions ORDER BY timestamp DESC LIMIT 10")
+        sessions = c.fetchall()
+        conn.close()
+        return sessions
+    except: return []
 
 def load_history(session_id):
-    conn = sqlite3.connect('dynamo_memory.db')
-    c = conn.cursor()
-    c.execute("SELECT role, content FROM messages WHERE session_id = ? ORDER BY id", (session_id,))
-    messages = [{"role": row[0], "content": row[1]} for row in c.fetchall()]
-    conn.close()
-    return messages
+    try:
+        conn = sqlite3.connect('dynamo_memory.db')
+        c = conn.cursor()
+        c.execute("SELECT role, content FROM messages WHERE session_id = ? ORDER BY id", (session_id,))
+        messages = [{"role": row[0], "content": row[1]} for row in c.fetchall()]
+        conn.close()
+        return messages
+    except: return []
 
-# Initialize DB
 init_db()
 
-# --- SESSION STATE SETUP ---
-if "session_id" not in st.session_state:
-    st.session_state.session_id = create_session()
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-if "uploader_key" not in st.session_state:
-    st.session_state.uploader_key = str(uuid.uuid4())
+# --- STATE MANAGEMENT ---
+if "session_id" not in st.session_state: st.session_state.session_id = create_session()
+if "messages" not in st.session_state: st.session_state.messages = []
+if "uploader_key" not in st.session_state: st.session_state.uploader_key = str(uuid.uuid4())
 
 # --- LOAD KEYS ---
 groq_key = st.secrets.get("GROQ_API_KEY")
 tavily_key = st.secrets.get("TAVILY_API_KEY")
-if not groq_key: st.stop()
+
+if not groq_key or not tavily_key:
+    st.warning("⚠️ API Keys Missing. Please set GROQ_API_KEY and TAVILY_API_KEY in Streamlit Secrets.")
+    st.stop()
 
 # --- CLIENTS ---
-groq_client = OpenAI(api_key=groq_key, base_url="[https://api.groq.com/openai/v1](https://api.groq.com/openai/v1)")
+groq_client = OpenAI(api_key=groq_key, base_url="https://api.groq.com/openai/v1")
 tavily_client = TavilyClient(api_key=tavily_key)
 
 # --- FUNCTIONS ---
@@ -90,26 +96,29 @@ def encode_image(uploaded_file):
     """Encodes image to base64 and detects correct MIME type"""
     if uploaded_file is None:
         return None
-    bytes_data = uploaded_file.getvalue()
-    base64_str = base64.b64encode(bytes_data).decode('utf-8')
-    return f"data:{uploaded_file.type};base64,{base64_str}"
+    try:
+        bytes_data = uploaded_file.getvalue()
+        base64_str = base64.b64encode(bytes_data).decode('utf-8')
+        # Check MIME type (default to jpeg if unknown)
+        mime_type = uploaded_file.type if uploaded_file.type else "image/jpeg"
+        return f"data:{mime_type};base64,{base64_str}"
+    except:
+        return None
 
 def generate_image(prompt):
-    return f"[https://image.pollinations.ai/prompt/](https://image.pollinations.ai/prompt/){prompt.replace(' ', '%20')}?nologo=true"
+    return f"https://image.pollinations.ai/prompt/{prompt.replace(' ', '%20')}?nologo=true"
 
 def extract_json_from_text(text):
     try:
         match = re.search(r'\{.*\}', text, re.DOTALL)
-        if match:
-            return json.loads(match.group(0))
-    except:
-        return None
+        if match: return json.loads(match.group(0))
+    except: return None
     return None
 
 # --- PRO UI CSS ---
 st.markdown("""
 <style>
-    @import url('[https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap](https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap)');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap');
     
     .stApp { background-color: #ffffff; font-family: 'Inter', sans-serif; }
     
@@ -122,6 +131,7 @@ st.markdown("""
     /* CHAT BUBBLES */
     .stChatMessage { background-color: transparent !important; border: none !important; }
     
+    /* User Bubble */
     div[data-testid="stChatMessage"]:nth-child(odd) {
         background-color: #F3F4F6 !important;
         border-radius: 20px;
@@ -130,6 +140,7 @@ st.markdown("""
         color: #1F2937;
     }
     
+    /* Assistant Bubble */
     div[data-testid="stChatMessage"]:nth-child(even) {
         background-color: #FFFFFF !important;
         padding: 10px 0px;
@@ -168,7 +179,7 @@ st.markdown("""
         background-color: #FFFBEB;
     }
     
-    /* HISTORY LIST */
+    /* HISTORY LIST Styling */
     div[data-testid="stVerticalBlock"] > div > button {
         text-align: left;
         border: none;
@@ -193,18 +204,17 @@ with st.sidebar:
     
     st.write("")
     
-    # 1. NEW PROJECT (Resets Chat AND Image Uploader)
+    # 1. NEW PROJECT
     if st.button("➕ New Project", use_container_width=True):
         st.session_state.session_id = create_session(f"Project {datetime.now().strftime('%d/%m %H:%M')}")
         st.session_state.messages = []
-        st.session_state.uploader_key = str(uuid.uuid4()) # Forces uploader to reset
+        st.session_state.uploader_key = str(uuid.uuid4())
         st.rerun()
     
     st.write("---")
     
     # 2. VISION UPLOADER
     with st.expander("👁️ Dynamo Vision"):
-        # We use the key to force reset on 'New Project'
         uploaded_img = st.file_uploader("Upload Image", type=["jpg", "png", "jpeg"], key=st.session_state.uploader_key)
         vision_data_url = encode_image(uploaded_img) if uploaded_img else None
         if vision_data_url: st.success("Image Active")
@@ -225,12 +235,12 @@ with st.sidebar:
         if st.button(f"📄 {s_title}", key=s_id, use_container_width=True):
             st.session_state.session_id = s_id
             st.session_state.messages = load_history(s_id)
-            st.session_state.uploader_key = str(uuid.uuid4()) # Clear image when loading old chat
+            st.session_state.uploader_key = str(uuid.uuid4())
             st.rerun()
 
 # --- MAIN CHAT AREA ---
 
-# Greeting (Only shows if no messages AND no active image)
+# Greeting
 if not st.session_state.messages and not vision_data_url:
     st.markdown("""
     <div style="text-align: center; margin-top: 50px;">
@@ -248,8 +258,7 @@ for msg in st.session_state.messages:
             json_str = msg["content"].replace("CHART::", "")
             try:
                 data = json.loads(json_str)
-                df = pd.DataFrame(data)
-                st.bar_chart(df.set_index(df.columns[0]))
+                st.bar_chart(pd.DataFrame(data).set_index(list(data.keys())[0]))
             except:
                 st.write("Error rendering chart.")
         else:
@@ -270,11 +279,14 @@ if prompt := st.chat_input("Message Dynamo..."):
         # A. IMAGE GENERATION
         if "image" in prompt.lower() and ("generate" in prompt.lower() or "create" in prompt.lower()):
             with st.spinner("Painting..."):
-                img_url = generate_image(prompt)
-                st.image(img_url)
-                save_msg = f"IMAGE::{img_url}"
-                st.session_state.messages.append({"role": "assistant", "content": save_msg})
-                save_message_db(st.session_state.session_id, "assistant", save_msg)
+                try:
+                    img_url = generate_image(prompt)
+                    st.image(img_url)
+                    save_msg = f"IMAGE::{img_url}"
+                    st.session_state.messages.append({"role": "assistant", "content": save_msg})
+                    save_message_db(st.session_state.session_id, "assistant", save_msg)
+                except Exception as e:
+                    st.error(f"Generation Error: {e}")
 
         # B. VISION (If Image Uploaded)
         elif vision_data_url:
@@ -294,7 +306,7 @@ if prompt := st.chat_input("Message Dynamo..."):
                     st.session_state.messages.append({"role": "assistant", "content": response})
                     save_message_db(st.session_state.session_id, "assistant", response)
                 except Exception as e:
-                    st.error(f"Vision Error: {e}")
+                    st.error(f"Vision Error: {e}. Try refreshing or checking Groq limits.")
 
         # C. ANALYST / CHAT MODE
         else:
@@ -314,25 +326,29 @@ if prompt := st.chat_input("Message Dynamo..."):
                 sys_prompt += "If user asks for a chart, return ONLY JSON data. Example: {\"Category\": [\"A\", \"B\"], \"Value\": [10, 20]}."
 
             # Inference
-            stream = groq_client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=[{"role": "system", "content": sys_prompt}, {"role": "user", "content": prompt}],
-                stream=True
-            )
-            
-            full_response = ""
-            for chunk in stream:
-                if chunk.choices[0].delta.content:
-                    full_response += chunk.choices[0].delta.content
-                    container.write(full_response)
-            
-            # Chart Logic
-            json_data = extract_json_from_text(full_response)
-            if json_data and (analyst_mode or "plot" in prompt.lower()):
-                st.bar_chart(pd.DataFrame(json_data).set_index(list(json_data.keys())[0]))
-                save_msg = f"CHART::{json.dumps(json_data)}"
-            else:
-                save_msg = full_response
+            try:
+                stream = groq_client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=[{"role": "system", "content": sys_prompt}, {"role": "user", "content": prompt}],
+                    stream=True
+                )
+                
+                full_response = ""
+                for chunk in stream:
+                    if chunk.choices[0].delta.content:
+                        full_response += chunk.choices[0].delta.content
+                        container.write(full_response)
+                
+                # Chart Logic
+                json_data = extract_json_from_text(full_response)
+                if json_data and (analyst_mode or "plot" in prompt.lower()):
+                    st.bar_chart(pd.DataFrame(json_data).set_index(list(json_data.keys())[0]))
+                    save_msg = f"CHART::{json.dumps(json_data)}"
+                else:
+                    save_msg = full_response
 
-            st.session_state.messages.append({"role": "assistant", "content": save_msg})
-            save_message_db(st.session_state.session_id, "assistant", save_msg)
+                st.session_state.messages.append({"role": "assistant", "content": save_msg})
+                save_message_db(st.session_state.session_id, "assistant", save_msg)
+            
+            except Exception as e:
+                st.error(f"Groq API Error: {e}. Check your API Key or connection.")
