@@ -187,7 +187,7 @@ for msg in st.session_state.messages:
             try:
                 response = requests.get(img_url)
                 img_data = BytesIO(response.content)
-                st.download_button(label="📥 Download Image", data=img_data, file_name="generated_image.png", mime="image/png")
+                st.download_button(label="📥 Download Image", data=img_data, file_name="generated_image.png", mime="image/png", key=f"dl_{img_url}")
             except:
                 st.warning("Could not prepare image for download.")
         else:
@@ -306,12 +306,23 @@ if final_query:
                 - Be accurate and cite sources.
                 """
                 
+                # --- FIX: BUILD MESSAGE HISTORY ---
+                # Start with System Prompt
+                api_messages = [{"role": "system", "content": system_prompt}]
+                
+                # Add Chat History (Last 5 messages for context, excluding the current new one)
+                # We slice [:-1] because we appended the user's latest query at the very top of this block
+                for msg in st.session_state.messages[:-1]:
+                    # Only add text content, skip image URLs to avoid confusion
+                    if not msg["content"].startswith("IMAGE::"):
+                        api_messages.append({"role": msg["role"], "content": msg["content"]})
+                
+                # Add Current User Question (final_query)
+                api_messages.append({"role": "user", "content": final_query})
+
                 stream = groq_client.chat.completions.create(
                     model="llama-3.3-70b-versatile",
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": final_query}
-                    ],
+                    messages=api_messages,
                     stream=True
                 )
                 response = st.write_stream(stream)
