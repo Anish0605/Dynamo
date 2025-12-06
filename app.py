@@ -174,6 +174,14 @@ for msg in st.session_state.messages:
         else:
             st.markdown(msg["content"])
 
+# --- QUICK ACTION BUTTONS ---
+st.write("")
+col_a, col_b, col_c = st.columns(3)
+quick_prompt = None
+if col_a.button("📝 Summarize"): quick_prompt = "Summarize our conversation so far."
+if col_b.button("🕵️ Fact Check"): quick_prompt = "Deeply verify the facts in the last response."
+if col_c.button("👶 Explain Simple"): quick_prompt = "Explain the last concept like I am 5 years old."
+
 # Input
 input_container = st.container()
 with input_container:
@@ -182,7 +190,10 @@ with input_container:
 
     final_query = None
     
-    if voice_audio:
+    # Determine the final query based on priority: Button > Voice > Text
+    if quick_prompt:
+        final_query = quick_prompt
+    elif voice_audio:
         with st.spinner("🎧 Hearing..."):
             try:
                 transcription = groq_client.audio.transcriptions.create(
