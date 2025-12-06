@@ -57,24 +57,24 @@ st.markdown("""
         border-right: 2px solid #000000;
     }
     
-    /* 6. BUTTON STYLING */
-    div.stButton > button {
+    /* 6. BUTTON STYLING (Applied to both Regular and Download Buttons) */
+    div.stButton > button, div.stDownloadButton > button {
         background-color: #000000 !important;
         color: #FFFFFF !important;
         border: 2px solid #000000 !important;
         border-radius: 20px !important;
         font-weight: bold !important;
     }
-    div.stButton > button:hover {
+    div.stButton > button:hover, div.stDownloadButton > button:hover {
         background-color: #FFFFFF !important;
         color: #000000 !important;
         transform: scale(1.02);
         border-color: #000000 !important;
     }
-    div.stButton > button p {
+    div.stButton > button p, div.stDownloadButton > button p {
         color: #FFFFFF !important;
     }
-    div.stButton > button:hover p {
+    div.stButton > button:hover p, div.stDownloadButton > button:hover p {
         color: #000000 !important;
     }
     
