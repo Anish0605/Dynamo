@@ -5,337 +5,326 @@ import PyPDF2
 import json
 import requests
 from io import BytesIO
+import base64
+import sqlite3
+import uuid
+import pandas as pd
+from datetime import datetime
+import re
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
-    page_title="Dynamo AI 2.0",
+    page_title="Dynamo AI",
     page_icon="⚡",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# --- CUSTOM CSS (HIGH CONTRAST & UI POLISH) ---
+# --- DATABASE ENGINE (MEMORY) ---
+def init_db():
+    conn = sqlite3.connect('dynamo_memory.db')
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS sessions
+                 (id TEXT PRIMARY KEY, title TEXT, timestamp DATETIME)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS messages
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, role TEXT, content TEXT)''')
+    conn.commit()
+    conn.close()
+
+def save_message_db(session_id, role, content):
+    conn = sqlite3.connect('dynamo_memory.db')
+    c = conn.cursor()
+    c.execute("INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)", 
+              (session_id, role, content))
+    conn.commit()
+    conn.close()
+
+def create_session(title="New Chat"):
+    session_id = str(uuid.uuid4())
+    conn = sqlite3.connect('dynamo_memory.db')
+    c = conn.cursor()
+    c.execute("INSERT INTO sessions (id, title, timestamp) VALUES (?, ?, ?)", 
+              (session_id, title, datetime.now()))
+    conn.commit()
+    conn.close()
+    return session_id
+
+def get_history():
+    conn = sqlite3.connect('dynamo_memory.db')
+    c = conn.cursor()
+    c.execute("SELECT id, title FROM sessions ORDER BY timestamp DESC LIMIT 10")
+    sessions = c.fetchall()
+    conn.close()
+    return sessions
+
+def load_history(session_id):
+    conn = sqlite3.connect('dynamo_memory.db')
+    c = conn.cursor()
+    c.execute("SELECT role, content FROM messages WHERE session_id = ? ORDER BY id", (session_id,))
+    messages = [{"role": row[0], "content": row[1]} for row in c.fetchall()]
+    conn.close()
+    return messages
+
+# Initialize DB
+init_db()
+
+# --- SESSION STATE ---
+if "session_id" not in st.session_state:
+    st.session_state.session_id = create_session()
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+# --- LOAD KEYS ---
+groq_key = st.secrets.get("GROQ_API_KEY")
+tavily_key = st.secrets.get("TAVILY_API_KEY")
+if not groq_key: st.stop()
+
+# --- CLIENTS ---
+groq_client = OpenAI(api_key=groq_key, base_url="https://api.groq.com/openai/v1")
+tavily_client = TavilyClient(api_key=tavily_key)
+
+# --- FUNCTIONS ---
+def encode_image(uploaded_file):
+    return base64.b64encode(uploaded_file.getvalue()).decode('utf-8')
+
+def generate_image(prompt):
+    return f"https://image.pollinations.ai/prompt/{prompt.replace(' ', '%20')}?nologo=true"
+
+def extract_json_from_text(text):
+    """Extracts JSON object from text for Data Viz"""
+    try:
+        match = re.search(r'\{.*\}', text, re.DOTALL)
+        if match:
+            return json.loads(match.group(0))
+    except:
+        return None
+    return None
+
+# --- PRO UI CSS ---
 st.markdown("""
 <style>
-    /* 1. Main Background - Bright Yellow */
-    .stApp {
-        background-color: #FFC107;
-        color: #000000;
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap');
+    
+    .stApp { background-color: #ffffff; font-family: 'Inter', sans-serif; }
+    
+    /* SIDEBAR */
+    [data-testid="stSidebar"] {
+        background-color: #F9FAFB;
+        border-right: 1px solid #E5E7EB;
     }
     
-    /* 2. FORCE TEXT COLORS TO BLACK (Page Default) */
-    h1, h2, h3, h4, h5, h6, p, div, span, label, li {
-        color: #000000;
+    /* CHAT BUBBLES */
+    .stChatMessage { background-color: transparent !important; border: none !important; }
+    
+    /* User Bubble - Grey */
+    div[data-testid="stChatMessage"]:nth-child(odd) {
+        background-color: #F3F4F6 !important;
+        border-radius: 20px;
+        padding: 10px 20px;
+        margin-bottom: 10px;
+        color: #1F2937;
     }
     
-    /* 3. CHAT BUBBLES - FORCE BLACK BACKGROUND */
-    .stChatMessage {
-        background-color: #000000 !important;
-        border: 2px solid #333 !important;
-        border-radius: 15px;
-        padding: 15px;
-    }
-    
-    /* 4. FORCE CHAT TEXT TO WHITE */
-    .stChatMessage p, 
-    .stChatMessage div, 
-    .stChatMessage span, 
-    .stChatMessage h1, 
-    .stChatMessage h2, 
-    .stChatMessage h3, 
-    .stChatMessage li {
-        color: #FFFFFF !important;
-    }
-    .stChatMessage code {
-        background-color: #333 !important;
-        color: #FFC107 !important;
+    /* Assistant Bubble - White */
+    div[data-testid="stChatMessage"]:nth-child(even) {
+        background-color: #FFFFFF !important;
+        padding: 10px 0px;
+        color: #1F2937;
     }
 
-    /* 5. SIDEBAR STYLING */
-    [data-testid="stSidebar"] {
-        background-color: #ffffff;
-        border-right: 2px solid #000000;
+    /* INPUT AREA (Floating) */
+    .stChatInput {
+        position: fixed;
+        bottom: 30px;
+        left: 50%;
+        transform: translateX(-40%);
+        width: 60%;
+        max-width: 800px;
+        z-index: 1000;
+        border-radius: 25px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        background: white;
+        border: 1px solid #E5E7EB;
+        padding: 5px;
+    }
+    .stChatInput input { border: none !important; box-shadow: none !important; }
+
+    /* BUTTONS */
+    .stButton > button {
+        border-radius: 12px;
+        border: 1px solid #E5E7EB;
+        background-color: white;
+        color: #374151;
+        font-weight: 500;
+        transition: all 0.2s;
+    }
+    .stButton > button:hover {
+        border-color: #FFC107;
+        color: black;
+        background-color: #FFFBEB;
     }
     
-    /* 6. BUTTON STYLING (Applied to both Regular and Download Buttons) */
-    div.stButton > button, div.stDownloadButton > button {
-        background-color: #000000 !important;
-        color: #FFFFFF !important;
-        border: 2px solid #000000 !important;
-        border-radius: 20px !important;
-        font-weight: bold !important;
+    /* HISTORY BUTTONS (Custom styling for sidebar list) */
+    div[data-testid="stVerticalBlock"] > div > button {
+        text-align: left;
+        border: none;
+        background: transparent;
+        color: #4B5563;
     }
-    div.stButton > button:hover, div.stDownloadButton > button:hover {
-        background-color: #FFFFFF !important;
-        color: #000000 !important;
-        transform: scale(1.02);
-        border-color: #000000 !important;
+    div[data-testid="stVerticalBlock"] > div > button:hover {
+        background: #E5E7EB;
+        color: black;
     }
-    div.stButton > button p, div.stDownloadButton > button p {
-        color: #FFFFFF !important;
-    }
-    div.stButton > button:hover p, div.stDownloadButton > button:hover p {
-        color: #000000 !important;
-    }
-    
-    /* 7. INPUT FIELD STYLING */
-    .stTextInput > div > div > input {
-        background-color: #FFFFFF !important;
-        color: #000000 !important;
-        border: 2px solid #000000 !important;
-    }
+
 </style>
 """, unsafe_allow_html=True)
 
-# --- SETUP KEYS & CLIENTS ---
-groq_key = st.secrets.get("GROQ_API_KEY")
-tavily_key = st.secrets.get("TAVILY_API_KEY")
-
-if not groq_key or not tavily_key:
-    st.error("⚠️ Missing Keys. Please add `GROQ_API_KEY` and `TAVILY_API_KEY` to your Streamlit Secrets.")
-    st.stop()
-
-# Brain & Voice (Groq)
-groq_client = OpenAI(api_key=groq_key, base_url="https://api.groq.com/openai/v1")
-# Search (Tavily)
-tavily_client = TavilyClient(api_key=tavily_key)
-
-# --- HELPER FUNCTIONS ---
-
-def generate_image(prompt):
-    """Generates an image using Pollinations AI (Free, No Key)"""
-    clean_prompt = prompt.replace(" ", "%20")
-    return f"https://image.pollinations.ai/prompt/{clean_prompt}?nologo=true"
-
-def deep_dive_search(query):
-    """Generates multiple search queries for better context"""
-    try:
-        response = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{
-                "role": "system", 
-                "content": "Return ONLY a JSON object with a key 'queries' containing a list of 3 distinct search queries to answer the user's question."
-            }, {
-                "role": "user", 
-                "content": query
-            }],
-            response_format={"type": "json_object"}
-        )
-        data = json.loads(response.choices[0].message.content)
-        return data.get('queries', [query])[:3]
-    except:
-        return [query] 
-
-def generate_suggestions(context_history):
-    """Generates 3 short follow-up suggestions based on chat history"""
-    try:
-        # Create a mini-history string
-        history_text = "\n".join([f"{msg['role']}: {msg['content']}" for msg in context_history[-3:]])
-        
-        response = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[
-                {"role": "system", "content": "You are a helpful assistant. Based on the chat history, suggest 3 short, actionable follow-up prompts the user might want to ask next. (e.g. 'Summarize this', 'Give examples', 'Convert to list'). Return ONLY a JSON object with a key 'suggestions' containing a list of 3 strings."},
-                {"role": "user", "content": f"Chat History:\n{history_text}"}
-            ],
-            response_format={"type": "json_object"}
-        )
-        data = json.loads(response.choices[0].message.content)
-        return data.get('suggestions', [])
-    except:
-        return ["Summarize this", "Tell me more", "Explain simply"]
-
-# --- SIDEBAR ---
+# --- SIDEBAR NAV ---
 with st.sidebar:
-    st.header("⚡ Toolkit 2.0")
-    st.write("---")
+    # Logo
+    col1, col2 = st.columns([1, 4])
+    with col1: 
+        st.markdown("<div style='width:32px;height:32px;border:2px solid #FFC107;border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:bold;color:#FFC107;'>⚡</div>", unsafe_allow_html=True)
+    with col2: 
+        st.markdown("### Dynamo")
     
-    use_search = st.toggle("🌐 Web Search", value=True)
-    deep_dive = st.toggle("🤿 Deep Dive Mode", value=False, help="Slower but smarter. Searches multiple angles.")
+    st.write("")
     
-    st.write("---")
-    
-    st.subheader("📂 Document")
-    uploaded_file = st.file_uploader("Upload PDF", type="pdf")
-    pdf_text = ""
-    if uploaded_file:
-        try:
-            reader = PyPDF2.PdfReader(uploaded_file)
-            for page in reader.pages[:10]:
-                pdf_text += page.extract_text()
-            st.success("PDF Loaded")
-        except:
-            st.error("Error reading PDF")
-
-    st.write("---")
-    
-    if "messages" in st.session_state and len(st.session_state.messages) > 0:
-        chat_log = "\n".join([f"{msg['role'].upper()}: {msg['content']}" for msg in st.session_state.messages])
-        st.download_button("📥 Download Chat", chat_log, file_name="dynamo_chat.txt")
-
-    if st.button("🗑️ Reset Memory", use_container_width=True):
+    # 1. NEW CHAT BUTTON
+    if st.button("➕ New Project", use_container_width=True):
+        st.session_state.session_id = create_session(f"Project {datetime.now().strftime('%d/%m %H:%M')}")
         st.session_state.messages = []
-        st.session_state.suggestion_prompt = None # Clear suggestions
         st.rerun()
+    
+    st.write("---")
+    
+    # 2. VISION UPLOADER
+    with st.expander("👁️ Dynamo Vision"):
+        uploaded_img = st.file_uploader("Upload Image", type=["jpg", "png"])
+        vision_base64 = encode_image(uploaded_img) if uploaded_img else None
+        if vision_base64: st.success("Image Active")
 
-# --- MAIN APP ---
-col1, col2 = st.columns([1, 15])
-with col1: st.write("# ⚡") 
-with col2: 
-    st.title("Dynamo AI")
-    st.caption("Power your Curiosity.")
+    st.write("---")
+    
+    # 3. SETTINGS
+    st.caption("TOOLS")
+    use_search = st.toggle("🌐 Web Search", value=True)
+    analyst_mode = st.toggle("📊 Analyst Mode", value=False, help="Forces data visualization output")
+    
+    st.write("---")
+    
+    # 4. HISTORY (FROM DB)
+    st.caption("HISTORY")
+    history = get_history()
+    for s_id, s_title in history:
+        if st.button(f"📄 {s_title}", key=s_id, use_container_width=True):
+            st.session_state.session_id = s_id
+            st.session_state.messages = load_history(s_id)
+            st.rerun()
 
-# Initialize Session State
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-if "suggestion_prompt" not in st.session_state:
-    st.session_state.suggestion_prompt = None
+# --- MAIN CHAT AREA ---
 
-# Display History
+# Greeting
+if not st.session_state.messages:
+    st.markdown("""
+    <div style="text-align: center; margin-top: 50px;">
+        <h1 style="font-weight: 600; color: #111;">How can I help you?</h1>
+        <p style="color: #666;">Ask me to generate images, analyze data, or read charts.</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+# Display Chat
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
-        if msg["content"].startswith("IMAGE::"):
-            img_url = msg["content"].replace("IMAGE::", "")
-            st.image(img_url)
-            # Add download button for historical images
+        if "IMAGE::" in msg["content"]:
+            st.image(msg["content"].replace("IMAGE::", ""))
+        elif "CHART::" in msg["content"]:
+            # Extract and render chart
+            json_str = msg["content"].replace("CHART::", "")
             try:
-                # Use a unique key for each download button based on URL
-                btn_key = f"dl_{img_url}_{st.session_state.messages.index(msg)}"
-                response = requests.get(img_url)
-                img_data = BytesIO(response.content)
-                st.download_button(label="📥 Download Image", data=img_data, file_name="generated_image.png", mime="image/png", key=btn_key)
+                data = json.loads(json_str)
+                df = pd.DataFrame(data)
+                st.bar_chart(df.set_index(df.columns[0]))
             except:
-                pass
+                st.write("Error rendering chart.")
         else:
-            st.markdown(msg["content"])
-
-# --- QUICK ACTION BUTTONS (TOP) ---
-st.write("")
-col_a, col_b, col_c = st.columns(3)
-quick_prompt = None
-
-# We use a callback to set the prompt if a button is clicked
-def set_quick_prompt(text):
-    st.session_state.suggestion_prompt = text
-
-if col_a.button("📝 Summarize"): set_quick_prompt("Summarize our conversation so far.")
-if col_b.button("🕵️ Fact Check"): set_quick_prompt("Deeply verify the facts in the last response.")
-if col_c.button("👶 Explain Simple"): set_quick_prompt("Explain the last concept like I am 5 years old.")
-
-# Input
-input_container = st.container()
-with input_container:
-    voice_audio = st.audio_input("🎙️ Voice")
-    chat_input = st.chat_input("Ask Dynamo...")
-
-    final_query = None
-    
-    # 1. Check if a Suggestion/Quick Button was clicked
-    if st.session_state.suggestion_prompt:
-        final_query = st.session_state.suggestion_prompt
-        st.session_state.suggestion_prompt = None # Reset after use
-    
-    # 2. Check Voice
-    elif voice_audio:
-        with st.spinner("🎧 Hearing..."):
-            try:
-                transcription = groq_client.audio.transcriptions.create(
-                    model="whisper-large-v3-turbo", 
-                    file=("audio.wav", voice_audio),
-                    response_format="text"
-                )
-                final_query = transcription
-            except: st.error("Voice Error")
-            
-    # 3. Check Text Input
-    elif chat_input:
-        final_query = chat_input
+            st.write(msg["content"])
 
 # --- LOGIC ENGINE ---
-if final_query:
-    st.session_state.messages.append({"role": "user", "content": final_query})
+if prompt := st.chat_input("Message Dynamo..."):
+    
+    # 1. User Message
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    save_message_db(st.session_state.session_id, "user", prompt)
     with st.chat_message("user"):
-        st.markdown(final_query)
+        st.write(prompt)
 
+    # 2. Assistant Logic
     with st.chat_message("assistant"):
         
-        # IMAGE GENERATION
-        if "image" in final_query.lower() and ("generate" in final_query.lower() or "draw" in final_query.lower() or "create" in final_query.lower()):
-            with st.status("🎨 Painting...", expanded=True):
-                refine_prompt = groq_client.chat.completions.create(
-                    model="llama-3.3-70b-versatile",
-                    messages=[{"role": "user", "content": f"Create a detailed, vivid image generation prompt for: {final_query}. Output ONLY the prompt string."}]
+        # A. IMAGE GENERATION
+        if "image" in prompt.lower() and ("generate" in prompt.lower() or "create" in prompt.lower()):
+            with st.spinner("Painting..."):
+                img_url = generate_image(prompt)
+                st.image(img_url)
+                save_msg = f"IMAGE::{img_url}"
+                st.session_state.messages.append({"role": "assistant", "content": save_msg})
+                save_message_db(st.session_state.session_id, "assistant", save_msg)
+
+        # B. VISION (If Image Uploaded)
+        elif vision_base64:
+            with st.status("👁️ Analyzing Image...", expanded=True):
+                response = groq_client.chat.completions.create(
+                    model="llama-3.2-90b-vision-preview",
+                    messages=[{
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{vision_base64}"}}
+                        ]
+                    }]
                 ).choices[0].message.content
-                
-                img_url = generate_image(refine_prompt)
-                st.image(img_url, caption=refine_prompt)
-                st.session_state.messages.append({"role": "assistant", "content": f"IMAGE::{img_url}"})
-                
-                # New Download Button
-                try:
-                    response = requests.get(img_url)
-                    img_data = BytesIO(response.content)
-                    st.download_button(label="📥 Download Image", data=img_data, file_name="generated_image.png", mime="image/png", key="new_dl_btn")
-                except Exception as e:
-                    st.error(f"Download Error: {e}")
-        
-        # TEXT RESEARCH
-        else:
-            with st.status("🧠 Dynamo is thinking...", expanded=True) as status:
-                web_context = ""
-                
-                if not pdf_text and use_search:
-                    if deep_dive:
-                        status.write("🤿 Deep Dive Active...")
-                        queries = deep_dive_search(final_query)
-                        all_results = []
-                        for q in queries:
-                            status.write(f"🔍 Searching: {q}...")
-                            try:
-                                res = tavily_client.search(query=q, search_depth="basic")
-                                all_results.extend([r['content'] for r in res['results']])
-                            except: pass
-                        web_context = "\n".join(all_results)
-                        with st.expander("View Deep Dive Data"):
-                            st.write(queries)
-                            st.write(web_context)
-                    else:
-                        status.write("🔍 Scanning web...")
-                        try:
-                            res = tavily_client.search(query=final_query, search_depth="basic")
-                            web_context = "\n".join([f"- {r['content']}" for r in res['results']])
-                        except: web_context = "Search failed."
-
-                status.write("⚙️ Synthesizing...")
-                system_prompt = f"""You are Dynamo AI.
-                CONTEXT: {pdf_text if pdf_text else "No PDF"} {web_context if web_context else "No Web Info"}
-                INSTRUCTIONS: If Deep Dive is ON, be exhaustive. If Image is requested, decline. Be accurate and cite sources.
-                """
-                
-                # Build History
-                api_messages = [{"role": "system", "content": system_prompt}]
-                for msg in st.session_state.messages[:-1]:
-                    if not msg["content"].startswith("IMAGE::"):
-                        api_messages.append({"role": msg["role"], "content": msg["content"]})
-                api_messages.append({"role": "user", "content": final_query})
-
-                stream = groq_client.chat.completions.create(
-                    model="llama-3.3-70b-versatile",
-                    messages=api_messages,
-                    stream=True
-                )
-                response = st.write_stream(stream)
-                status.update(label="✅ Complete", state="complete", expanded=False)
+                st.write(response)
                 st.session_state.messages.append({"role": "assistant", "content": response})
+                save_message_db(st.session_state.session_id, "assistant", response)
+
+        # C. ANALYST / CHAT MODE
+        else:
+            container = st.empty()
             
-            # --- DYNAMIC SUGGESTIONS (Validating Tester Feedback) ---
-            # Generate 3 follow-up suggestions
-            suggestions = generate_suggestions(st.session_state.messages)
+            # Context
+            context = ""
+            if use_search:
+                try:
+                    res = tavily_client.search(query=prompt, search_depth="basic")
+                    context = "\n".join([r['content'] for r in res['results']])
+                except: pass
+
+            # System Prompt
+            sys_prompt = f"Context: {context}. "
+            if analyst_mode or "plot" in prompt.lower() or "chart" in prompt.lower():
+                sys_prompt += "If the user asks for a chart, return ONLY a JSON object with the data. Example: {\"Month\": [\"Jan\", \"Feb\"], \"Sales\": [10, 20]}."
+
+            # API Call
+            stream = groq_client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[{"role": "system", "content": sys_prompt}, {"role": "user", "content": prompt}],
+                stream=True
+            )
             
-            if suggestions:
-                st.write("### 💡 Suggested Next Steps:")
-                cols = st.columns(len(suggestions))
-                for i, sugg in enumerate(suggestions):
-                    if cols[i].button(sugg, key=f"sugg_{len(st.session_state.messages)}_{i}"):
-                        set_quick_prompt(sugg)
-                        st.rerun()
+            full_response = ""
+            for chunk in stream:
+                if chunk.choices[0].delta.content:
+                    full_response += chunk.choices[0].delta.content
+                    container.write(full_response)
+            
+            # Check for Chart Data
+            json_data = extract_json_from_text(full_response)
+            if json_data and (analyst_mode or "plot" in prompt.lower()):
+                st.bar_chart(pd.DataFrame(json_data).set_index(list(json_data.keys())[0]))
+                save_msg = f"CHART::{json.dumps(json_data)}" # Save as special tag
+            else:
+                save_msg = full_response
+
+            st.session_state.messages.append({"role": "assistant", "content": save_msg})
+            save_message_db(st.session_state.session_id, "assistant", save_msg)
