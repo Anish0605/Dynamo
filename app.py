@@ -3,6 +3,8 @@ from openai import OpenAI
 from tavily import TavilyClient
 import PyPDF2
 import json
+import requests
+from io import BytesIO
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -56,18 +58,27 @@ st.markdown("""
         border-right: 2px solid #000000;
     }
     
-    /* 6. BUTTON STYLING */
-    .stButton > button {
+    /* 6. BUTTON STYLING - MORE AGGRESSIVE SELECTOR */
+    /* Targets all buttons, including quick actions and download buttons */
+    div.stButton > button:first-child {
         background-color: #000000 !important;
         color: #FFFFFF !important;
         border: 2px solid #000000 !important;
-        border-radius: 20px;
-        font-weight: bold;
+        border-radius: 20px !important;
+        font-weight: bold !important;
     }
-    .stButton > button:hover {
+    div.stButton > button:first-child:hover {
         background-color: #FFFFFF !important;
         color: #000000 !important;
         transform: scale(1.02);
+        border-color: #000000 !important;
+    }
+    /* Force text inside buttons to be white */
+    div.stButton > button:first-child p {
+        color: #FFFFFF !important;
+    }
+    div.stButton > button:first-child:hover p {
+        color: #000000 !important;
     }
     
     /* 7. INPUT FIELD STYLING */
@@ -170,7 +181,15 @@ for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         # Check if message is a special Image tag
         if msg["content"].startswith("IMAGE::"):
-            st.image(msg["content"].replace("IMAGE::", ""))
+            img_url = msg["content"].replace("IMAGE::", "")
+            st.image(img_url)
+            # Add download button for historical images
+            try:
+                response = requests.get(img_url)
+                img_data = BytesIO(response.content)
+                st.download_button(label="📥 Download Image", data=img_data, file_name="generated_image.png", mime="image/png")
+            except:
+                st.warning("Could not prepare image for download.")
         else:
             st.markdown(msg["content"])
 
@@ -230,6 +249,15 @@ if final_query:
                 
                 # Save to history with special tag
                 st.session_state.messages.append({"role": "assistant", "content": f"IMAGE::{img_url}"})
+
+                # --- NEW: DOWNLOAD BUTTON FOR CURRENT IMAGE ---
+                try:
+                    response = requests.get(img_url)
+                    img_data = BytesIO(response.content)
+                    st.download_button(label="📥 Download Image", data=img_data, file_name="generated_image.png", mime="image/png")
+                except Exception as e:
+                    st.error(f"Could not prepare download: {e}")
+
         
         # 2. TEXT / RESEARCH MODE
         else:
