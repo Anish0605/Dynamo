@@ -183,7 +183,7 @@ col1, col2 = st.columns([1, 15])
 with col1: st.write("# ⚡") 
 with col2: 
     st.title("Dynamo AI")
-    st.caption("Phase 2: Deep Dive & Image Gen")
+    st.caption("Power your Curiosity.")
 
 # Initialize Session State
 if "messages" not in st.session_state:
