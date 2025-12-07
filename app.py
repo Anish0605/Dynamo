@@ -22,7 +22,8 @@ def init_db():
         conn.close()
     except: pass
 
-def save_msg(sid, role, content):
+# FIX: Renamed function to avoid collision with variable names
+def save_message_to_db(sid, role, content):
     try:
         conn = sqlite3.connect('dynamo_memory.db')
         conn.execute('INSERT INTO messages VALUES (?, ?, ?)', (sid, role, content))
@@ -76,7 +77,7 @@ def generate_image(prompt):
 
 def extract_json(text):
     try:
-        match = re.search(r'\{.*\}', text, re.DOTALL)
+        match = re.search(r'\{[\s\S]*\}', text)
         if match: return json.loads(match.group(0))
     except: return None
 
@@ -113,6 +114,9 @@ st.markdown("""
     .stChatMessage { background-color: transparent !important; }
     div[data-testid="stChatMessage"]:nth-child(odd) { background-color: #F3F4F6 !important; color: black; }
     div[data-testid="stChatMessage"]:nth-child(even) { background-color: white !important; color: black; }
+    
+    /* Spacer for fixed input */
+    .block-container { padding-bottom: 150px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -177,7 +181,7 @@ if voice:
 
 if prompt := st.chat_input("Message Dynamo..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
-    save_msg(st.session_state.sid, "user", prompt)
+    save_message_to_db(st.session_state.sid, "user", prompt)
     with st.chat_message("user"): st.write(prompt)
 
     with st.chat_message("assistant"):
@@ -190,13 +194,13 @@ if prompt := st.chat_input("Message Dynamo..."):
                 messages=[{"role":"user", "content":[{"type":"text","text":prompt},{"type":"image_url","image_url":{"url":f"data:{mime};base64,{b64}"}}]}]
             ).choices[0].message.content
             st.write(resp)
-            save_msg(st.session_state.sid, "assistant", resp)
+            save_message_to_db(st.session_state.sid, "assistant", resp)
             st.session_state.messages.append({"role": "assistant", "content": resp})
         elif "image" in prompt.lower() and "generate" in prompt.lower():
             # Image Gen
             url = generate_image(prompt)
             st.image(url)
-            save_msg(st.session_state.sid, "assistant", f"IMAGE::{url}")
+            save_message_to_db(st.session_state.sid, "assistant", f"IMAGE::{url}")
             st.session_state.messages.append({"role": "assistant", "content": f"IMAGE::{url}"})
         else:
             # Chat
@@ -224,11 +228,15 @@ if prompt := st.chat_input("Message Dynamo..."):
                         container.write(full_resp)
                 
                 json_data = extract_json(full_resp)
+                
+                # FIX: Use a different variable name for the final content string
+                content_to_save = full_resp
+
                 if json_data and analyst:
                     st.bar_chart(pd.DataFrame(json_data))
-                    save_msg = f"CHART::{json.dumps(json_data)}"
-                else: save_msg = full_resp
+                    content_to_save = f"CHART::{json.dumps(json_data)}"
                 
-                save_msg(st.session_state.sid, "assistant", save_msg)
-                st.session_state.messages.append({"role": "assistant", "content": save_msg})
+                # Now we call the FUNCTION (save_message_to_db) with the CONTENT STRING (content_to_save)
+                save_message_to_db(st.session_state.sid, "assistant", content_to_save)
+                st.session_state.messages.append({"role": "assistant", "content": content_to_save})
             except Exception as e: st.error(f"Error: {e}")
