@@ -224,32 +224,31 @@ for msg in st.session_state.messages:
 # --- PERSISTENT CONTROLS (Bottom Fixed) ---
 # We put these in a container to keep them near the input
 with st.container():
-    # File Uploader (Acts as 'Clip')
-    with st.expander("📎 Add Attachment / Image", expanded=False):
-        img = st.file_uploader("Upload", type=["png", "jpg", "jpeg"], label_visibility="collapsed", key=st.session_state.uploader_key)
+    c_voice, c_upload = st.columns([5, 1])
     
-    # Quick Actions Row
-    c1, c2, c3, c4 = st.columns([1,1,1,1])
-    # Logic: Clicking a button sets a trigger that runs on the NEXT rerun
-    if c1.button("🎙️ Voice"):
-        st.info("Listening... (Use the native mic icon in chat bar if available)")
-    if c2.button("📝 Summarize"): 
-        st.session_state.prompt_trigger = "Summarize our conversation so far."
-    if c3.button("🕵️ Fact Check"): 
-        st.session_state.prompt_trigger = "Verify the facts in the last response."
-    if c4.button("👶 Explain"): 
-        st.session_state.prompt_trigger = "Explain the last concept simply."
+    with c_voice:
+        # Voice Input
+        voice = st.audio_input("🎙️ Voice")
+        
+    with c_upload:
+        # File Uploader (Acts as 'Clip')
+        with st.expander("📎", expanded=False):
+            img = st.file_uploader("Upload", type=["png", "jpg", "jpeg"], label_visibility="collapsed", key=st.session_state.uploader_key)
+
+# Voice Logic
+if voice:
+    try:
+        txt = client.audio.transcriptions.create(model="whisper-large-v3-turbo", file=("audio.wav", voice), response_format="text")
+        st.session_state.messages.append({"role":"user", "content":txt})
+        save_msg_db(st.session_state.sid, "user", txt)
+        st.rerun()
+    except: st.error("Voice Error")
 
 # 3. INPUT HANDLING
 chat_input_val = st.chat_input("Message Dynamo...")
 
 # Determine Final Prompt
-prompt = None
-if st.session_state.prompt_trigger:
-    prompt = st.session_state.prompt_trigger
-    st.session_state.prompt_trigger = None # Reset
-elif chat_input_val:
-    prompt = chat_input_val
+prompt = chat_input_val
 
 # 4. LOGIC ENGINE
 if prompt:
