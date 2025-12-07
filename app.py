@@ -89,6 +89,17 @@ def extract_json(text):
         if match: return json.loads(match.group(0))
     except: return None
 
+def deep_dive_search(query):
+    try:
+        sys_prompt = "You are a research planner. Return a JSON object with a key 'queries' containing 3 distinct search queries to answer the user's question."
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "system", "content": sys_prompt}, {"role": "user", "content": query}],
+            response_format={"type": "json_object"}
+        )
+        return json.loads(response.choices[0].message.content).get('queries', [query])[:3]
+    except: return [query]
+
 # --- UI CSS (MATCHING INDEX.HTML) ---
 st.markdown("""
 <style>
@@ -269,30 +280,37 @@ if prompt:
             if use_search:
                 if deep_dive:
                     with st.status("🤿 Deep Diving..."):
-                        # Multi-query logic can go here (simplified for stability)
-                        try:
-                            res = tavily.search(query=prompt)
-                            context = "\n".join([r['content'] for r in res['results']])
-                        except: pass
+                        queries = deep_dive_search(prompt)
+                        all_res = []
+                        for q in queries:
+                            st.write(f"Searching: {q}...")
+                            try:
+                                res = tavily.search(query=q)
+                                all_res.extend([r['content'] for r in res['results']])
+                            except: pass
+                        context = "\n".join(all_res)
                 else:
                     try:
                         res = tavily.search(query=prompt)
                         context = "\n".join([r['content'] for r in res['results']])
                     except: pass
             
-            # --- CRITICAL FIX: CONTEXT AWARENESS ---
-            # We must send previous messages to the LLM so it knows what to "Summarize"
-            messages_payload = [{"role": "system", "content": f"Context: {context}. If Analyst Mode is on, return ONLY JSON."}]
+            # --- CRITICAL FIX: SMART PROMPT CONSTRUCTION ---
+            # 1. Base instruction based on Analyst Mode toggle
+            if analyst:
+                sys_instruction = f"Context: {context}. You are in Analyst Mode. Return ONLY JSON data for charts in this format: {{'Category': ['A', 'B'], 'Value': [10, 20]}}."
+            else:
+                sys_instruction = f"Context: {context}. Answer in clear Markdown. Do NOT return JSON unless explicitly asked."
             
-            # Add last 5 messages from history to payload
+            messages_payload = [{"role": "system", "content": sys_instruction}]
+            
+            # 2. Add history context for Summarize/Fact Check
             for m in st.session_state.messages[-6:]: 
                 if "IMAGE::" not in m["content"] and "CHART::" not in m["content"]:
                     messages_payload.append({"role": m["role"], "content": m["content"]})
             
-            # Ensure the last message is the current prompt (already added to state above, but good to be explicit if needed, 
-            # though here we rely on state being up to date).
-            # Actually, since we appended the user prompt to state at the start of this block, 
-            # the loop above ALREADY includes the current prompt.
+            # 3. Add current prompt (if not already in history loop, but we added it to state above)
+            # Since we added it to state, the loop captures it.
             
             try:
                 stream = client.chat.completions.create(
@@ -307,11 +325,11 @@ if prompt:
                         full_resp += chunk.choices[0].delta.content
                         container.write(full_resp)
                 
-                # Analyst Mode Check
+                # Check for Chart JSON only if Analyst Mode is ON or explicit keywords
                 json_data = extract_json(full_resp)
                 content_to_save = full_resp
                 
-                if json_data and analyst:
+                if json_data and (analyst or "chart" in prompt.lower() or "plot" in prompt.lower()):
                     st.bar_chart(pd.DataFrame(json_data))
                     content_to_save = f"CHART::{json.dumps(json_data)}"
                 
