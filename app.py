@@ -133,6 +133,24 @@ st.markdown("""
         border: 1px solid #E5E7EB;
         padding-bottom: 0px;
     }
+    .stChatInput input { border: none !important; box-shadow: none !important; }
+
+    /* Buttons */
+    div.stButton > button {
+        border-radius: 20px;
+        border: 1px solid #E5E7EB;
+        background-color: white;
+        color: #374151;
+        font-weight: 600;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+        transition: all 0.2s;
+    }
+    div.stButton > button:hover {
+        border-color: #FFC107;
+        color: black;
+        background-color: #FFFBEB;
+        transform: translateY(-1px);
+    }
     
     /* Hide Header */
     header {visibility: hidden;}
@@ -179,6 +197,18 @@ if not st.session_state.messages:
         <h1 style='font-weight: 600; color: #111; font-size: 2.5rem; letter-spacing: -0.02em;'>How can I help you?</h1>
     </div>
     """, unsafe_allow_html=True)
+    
+    # Quick Action Pills (Centered)
+    col1, col2, col3 = st.columns([1,1,1])
+    if col1.button("🎨 Create Logo", use_container_width=True):
+        st.session_state.messages.append({"role": "user", "content": "Create a futuristic logo for Dynamo AI"})
+        st.rerun()
+    if col2.button("📊 Analyze Trends", use_container_width=True):
+        st.session_state.messages.append({"role": "user", "content": "Analyze current AI market trends"})
+        st.rerun()
+    if col3.button("📝 Summarize", use_container_width=True):
+        st.session_state.messages.append({"role": "user", "content": "Summarize what I can do here."})
+        st.rerun()
 
 # 2. CHAT HISTORY
 for msg in st.session_state.messages:
@@ -248,7 +278,7 @@ if prompt:
                     b64 = encode_image(img).split(",")[1]
                     mime = img.type if img.type else "image/jpeg"
                     resp = client.chat.completions.create(
-                        model="llama-3.2-90b-vision-preview",
+                        model="llama-3.2-11b-vision-preview", # Updated to active model
                         messages=[{"role":"user", "content":[{"type":"text","text":prompt},{"type":"image_url","image_url":{"url":f"data:{mime};base64,{b64}"}}]}]
                     ).choices[0].message.content
                     st.write(resp)
