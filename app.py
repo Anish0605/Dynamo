@@ -15,7 +15,7 @@ st.set_page_config(page_title="Dynamo AI", page_icon="⚡", layout="wide")
 # --- DATABASE SETUP ---
 def init_db():
     try:
-        conn = sqlite3.connect('dynamo_memory_v4.db')
+        conn = sqlite3.connect('dynamo_memory_v5.db')
         c = conn.cursor()
         c.execute('CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, title TEXT, timestamp DATETIME)')
         c.execute('CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, role TEXT, content TEXT)')
@@ -25,7 +25,7 @@ def init_db():
 
 def save_msg_db(sid, role, content):
     try:
-        conn = sqlite3.connect('dynamo_memory_v4.db')
+        conn = sqlite3.connect('dynamo_memory_v5.db')
         conn.execute('INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)', (sid, role, content))
         conn.commit()
         conn.close()
@@ -33,7 +33,7 @@ def save_msg_db(sid, role, content):
 
 def get_history_db():
     try:
-        conn = sqlite3.connect('dynamo_memory_v4.db')
+        conn = sqlite3.connect('dynamo_memory_v5.db')
         c = conn.cursor()
         c.execute("SELECT id, title FROM sessions ORDER BY timestamp DESC LIMIT 10")
         return c.fetchall()
@@ -41,7 +41,7 @@ def get_history_db():
 
 def load_history_db(sid):
     try:
-        conn = sqlite3.connect('dynamo_memory_v4.db')
+        conn = sqlite3.connect('dynamo_memory_v5.db')
         c = conn.cursor()
         c.execute("SELECT role, content FROM messages WHERE session_id = ? ORDER BY id", (sid,))
         return [{"role": row[0], "content": row[1]} for row in c.fetchall()]
@@ -53,7 +53,7 @@ init_db()
 if "sid" not in st.session_state: 
     st.session_state.sid = str(uuid.uuid4())
     try:
-        conn = sqlite3.connect('dynamo_memory_v4.db')
+        conn = sqlite3.connect('dynamo_memory_v5.db')
         conn.execute("INSERT INTO sessions (id, title, timestamp) VALUES (?, ?, ?)", (st.session_state.sid, f"Chat {datetime.now().strftime('%H:%M')}", datetime.now()))
         conn.commit()
         conn.close()
@@ -61,6 +61,7 @@ if "sid" not in st.session_state:
 
 if "messages" not in st.session_state: st.session_state.messages = []
 if "uploader_key" not in st.session_state: st.session_state.uploader_key = str(uuid.uuid4())
+if "prompt_trigger" not in st.session_state: st.session_state.prompt_trigger = None
 
 # --- KEYS ---
 groq_key = st.secrets.get("GROQ_API_KEY")
@@ -89,18 +90,7 @@ def extract_json(text):
         if match: return json.loads(match.group(0))
     except: return None
 
-def deep_dive_search(query):
-    try:
-        sys_prompt = "You are a research planner. Return a JSON object with a key 'queries' containing 3 distinct search queries to answer the user's question."
-        response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role": "system", "content": sys_prompt}, {"role": "user", "content": query}],
-            response_format={"type": "json_object"}
-        )
-        return json.loads(response.choices[0].message.content).get('queries', [query])[:3]
-    except: return [query]
-
-# --- UI CSS (MATCHING INDEX.HTML) ---
+# --- UI CSS (PREMIUM STYLE) ---
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap');
@@ -113,7 +103,7 @@ st.markdown("""
         border-right: 1px solid #E5E7EB;
     }
     
-    /* Clean Chat Bubbles */
+    /* Chat Bubbles */
     .stChatMessage { background-color: transparent !important; border: none !important; }
     div[data-testid="stChatMessage"]:nth-child(odd) { 
         background-color: #F3F4F6 !important; 
@@ -128,7 +118,7 @@ st.markdown("""
         color: #1F2937;
     }
 
-    /* Fixed Input Bar */
+    /* Fixed Input Area */
     .stChatInput {
         position: fixed;
         bottom: 30px;
@@ -143,30 +133,12 @@ st.markdown("""
         border: 1px solid #E5E7EB;
         padding-bottom: 0px;
     }
-    .stChatInput input { border: none !important; box-shadow: none !important; }
-
-    /* Buttons */
-    div.stButton > button {
-        border-radius: 20px;
-        border: 1px solid #E5E7EB;
-        background-color: white;
-        color: #374151;
-        font-weight: 600;
-        box-shadow: 0 1px 2px rgba(0,0,0,0.05);
-        transition: all 0.2s;
-    }
-    div.stButton > button:hover {
-        border-color: #FFC107;
-        color: black;
-        background-color: #FFFBEB;
-        transform: translateY(-1px);
-    }
     
     /* Hide Header */
     header {visibility: hidden;}
     
-    /* Spacing */
-    .block-container { padding-bottom: 150px; }
+    /* Spacing for bottom fixed elements */
+    .block-container { padding-bottom: 250px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -184,9 +156,7 @@ with st.sidebar:
     
     st.write("---")
     
-    with st.expander("👁️ Vision Input"):
-        img = st.file_uploader("Upload Image", type=["png", "jpg", "jpeg"], key=st.session_state.uploader_key)
-    
+    # Tool Toggles
     use_search = st.toggle("🌐 Web Search", value=True)
     deep_dive = st.toggle("🤿 Deep Dive", value=False)
     analyst = st.toggle("📊 Analyst Mode", value=False)
@@ -209,18 +179,6 @@ if not st.session_state.messages:
         <h1 style='font-weight: 600; color: #111; font-size: 2.5rem; letter-spacing: -0.02em;'>How can I help you?</h1>
     </div>
     """, unsafe_allow_html=True)
-    
-    # Quick Action Pills (Centered)
-    col1, col2, col3 = st.columns([1,1,1])
-    if col1.button("🎨 Create Logo", use_container_width=True):
-        st.session_state.messages.append({"role": "user", "content": "Create a futuristic logo for Dynamo AI"})
-        st.rerun()
-    if col2.button("📊 Analyze Trends", use_container_width=True):
-        st.session_state.messages.append({"role": "user", "content": "Analyze current AI market trends"})
-        st.rerun()
-    if col3.button("📝 Summarize", use_container_width=True):
-        st.session_state.messages.append({"role": "user", "content": "Summarize what I can do here."})
-        st.rerun()
 
 # 2. CHAT HISTORY
 for msg in st.session_state.messages:
@@ -233,8 +191,35 @@ for msg in st.session_state.messages:
         else: 
             st.write(msg["content"])
 
+# --- PERSISTENT CONTROLS (Bottom Fixed) ---
+# We put these in a container to keep them near the input
+with st.container():
+    # File Uploader (Acts as 'Clip')
+    with st.expander("📎 Add Attachment / Image", expanded=False):
+        img = st.file_uploader("Upload", type=["png", "jpg", "jpeg"], label_visibility="collapsed", key=st.session_state.uploader_key)
+    
+    # Quick Actions Row
+    c1, c2, c3, c4 = st.columns([1,1,1,1])
+    # Logic: Clicking a button sets a trigger that runs on the NEXT rerun
+    if c1.button("🎙️ Voice"):
+        st.info("Listening... (Use the native mic icon in chat bar if available)")
+    if c2.button("📝 Summarize"): 
+        st.session_state.prompt_trigger = "Summarize our conversation so far."
+    if c3.button("🕵️ Fact Check"): 
+        st.session_state.prompt_trigger = "Verify the facts in the last response."
+    if c4.button("👶 Explain"): 
+        st.session_state.prompt_trigger = "Explain the last concept simply."
+
 # 3. INPUT HANDLING
-prompt = st.chat_input("Message Dynamo...")
+chat_input_val = st.chat_input("Message Dynamo...")
+
+# Determine Final Prompt
+prompt = None
+if st.session_state.prompt_trigger:
+    prompt = st.session_state.prompt_trigger
+    st.session_state.prompt_trigger = None # Reset
+elif chat_input_val:
+    prompt = chat_input_val
 
 # 4. LOGIC ENGINE
 if prompt:
@@ -278,44 +263,33 @@ if prompt:
             
             # Search
             if use_search:
-                if deep_dive:
-                    with st.status("🤿 Deep Diving..."):
-                        queries = deep_dive_search(prompt)
-                        all_res = []
-                        for q in queries:
-                            st.write(f"Searching: {q}...")
-                            try:
-                                res = tavily.search(query=q)
-                                all_res.extend([r['content'] for r in res['results']])
-                            except: pass
-                        context = "\n".join(all_res)
-                else:
+                with st.status("Searching...", expanded=False):
                     try:
                         res = tavily.search(query=prompt)
                         context = "\n".join([r['content'] for r in res['results']])
                     except: pass
             
-            # --- CRITICAL FIX: SMART PROMPT CONSTRUCTION ---
-            # 1. Base instruction based on Analyst Mode toggle
-            if analyst:
-                sys_instruction = f"Context: {context}. You are in Analyst Mode. Return ONLY JSON data for charts in this format: {{'Category': ['A', 'B'], 'Value': [10, 20]}}."
-            else:
-                sys_instruction = f"Context: {context}. Answer in clear Markdown. Do NOT return JSON unless explicitly asked."
-            
-            messages_payload = [{"role": "system", "content": sys_instruction}]
-            
-            # 2. Add history context for Summarize/Fact Check
-            for m in st.session_state.messages[-6:]: 
+            # Context Building (Fix for Summarizer)
+            # We must include previous messages so the AI knows what to summarize!
+            history_context = ""
+            # Grab last 10 messages to keep context window manageable
+            for m in st.session_state.messages[-10:]:
                 if "IMAGE::" not in m["content"] and "CHART::" not in m["content"]:
-                    messages_payload.append({"role": m["role"], "content": m["content"]})
+                    history_context += f"{m['role']}: {m['content']}\n"
+
+            sys_prompt = f"""
+            You are Dynamo AI. 
+            CONTEXT FROM WEB: {context}
+            CHAT HISTORY: {history_context}
+            INSTRUCTION: Use the Chat History to answer questions like 'Summarize' or 'Explain'. If Analyst Mode is on, return ONLY JSON.
+            """
             
-            # 3. Add current prompt (if not already in history loop, but we added it to state above)
-            # Since we added it to state, the loop captures it.
+            if analyst: sys_prompt += " Return ONLY JSON for charts. Format: [{'Category': 'A', 'Value': 10}, ...]"
             
             try:
                 stream = client.chat.completions.create(
                     model="llama-3.3-70b-versatile",
-                    messages=messages_payload,
+                    messages=[{"role":"system", "content":sys_prompt}, {"role":"user", "content":prompt}],
                     stream=True
                 )
                 
@@ -325,15 +299,13 @@ if prompt:
                         full_resp += chunk.choices[0].delta.content
                         container.write(full_resp)
                 
-                # Check for Chart JSON only if Analyst Mode is ON or explicit keywords
                 json_data = extract_json(full_resp)
                 content_to_save = full_resp
                 
-                if json_data and (analyst or "chart" in prompt.lower() or "plot" in prompt.lower()):
+                if json_data and analyst:
                     st.bar_chart(pd.DataFrame(json_data))
                     content_to_save = f"CHART::{json.dumps(json_data)}"
                 
                 save_msg_db(st.session_state.sid, "assistant", content_to_save)
                 st.session_state.messages.append({"role": "assistant", "content": content_to_save})
-            
-            except Exception as e: st.error(f"API Error: {e}")
+            except Exception as e: st.error(f"Error: {e}")
